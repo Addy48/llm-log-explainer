@@ -4,3 +4,4 @@ __pycache__/
 logs/
 models/
 .DS_Store
+llm-service/raw_logs/
