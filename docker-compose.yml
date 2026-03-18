@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  log-generator:
+    build: ./log-generator
+    container_name: log-generator
+    ports:
+      - "5000:5000"
+    networks:
+      - llm-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  llm-service:
+    build: ./llm-service
+    container_name: llm-service
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_GENERATOR_URL=http://log-generator:5000
+      - MODEL_DIR=./models/distilbert-log
+    depends_on:
+      log-generator:
+        condition: service_healthy
+    networks:
+      - llm-network
+
+  web-interface:
+    build: ./web-interface
+    container_name: web-interface
+    ports:
+      - "3000:3000"
+    depends_on:
+      - llm-service
+    networks:
+      - llm-network
+
+networks:
+  llm-network:
+    driver: bridge
