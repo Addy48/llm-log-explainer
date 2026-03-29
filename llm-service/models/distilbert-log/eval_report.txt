@@ -1,0 +1,24 @@
+EVALUATION REPORT
+=================
+Accuracy: 1.0000
+F1 Score: 1.0000
+
+Confusion Matrix:
+[[ 16   0]
+ [  0 384]]
+
+Classification Report:
+              precision    recall  f1-score   support
+
+         LOW       1.00      1.00      1.00        16
+      MEDIUM       1.00      1.00      1.00       384
+
+    accuracy                           1.00       400
+   macro avg       1.00      1.00      1.00       400
+weighted avg       1.00      1.00      1.00       400
+
+
+Notes:
+- Model trained on 1600 samples (2000 total, 80/20 split)
+- 3 epochs of training
+- Perfect performance on test set
