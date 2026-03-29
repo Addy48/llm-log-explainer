@@ -1,11 +1,11 @@
-FROM python:3.11-slim
+FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+COPY index.html app.js style.css ./
 
-COPY index.html .
+RUN npm install -g http-server
 
 EXPOSE 3000
 
-CMD ["python", "-m", "http.server", "3000"]
+CMD ["http-server", "-p", "3000", "--cors"]
