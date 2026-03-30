@@ -1,23 +1,11 @@
-version: '3.8'
-
 services:
   log-generator:
     build: ./log-generator
     container_name: log-generator
     ports:
       - "5001:5000"
-    environment:
-      - FLASK_APP=app.py
-      - FLASK_ENV=production
     networks:
       - llm-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
 
   llm-service:
     build: ./llm-service
@@ -27,21 +15,10 @@ services:
     environment:
       - LOG_GENERATOR_URL=http://log-generator:5000
       - MODEL_DIR=./models/distilbert-log
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ./llm-service/models:/app/models
     depends_on:
-      log-generator:
-        condition: service_healthy
+      - log-generator
     networks:
       - llm-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    restart: unless-stopped
 
   web-interface:
     build: ./web-interface
@@ -49,21 +26,10 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - log-generator
       - llm-service
     networks:
       - llm-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-    restart: unless-stopped
 
 networks:
   llm-network:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
