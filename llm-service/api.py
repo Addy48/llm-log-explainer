@@ -27,7 +27,12 @@ class ExplainBatchRequest(BaseModel):
     logs: list
     scenario: Optional[str] = None
 
-from prompts import EXPLANATIONS
+from prompts import EXPLANATION_TEMPLATES as EXPLANATIONS
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy", "service": "llm-service"}
 
 @app.post("/explain")
 def explain(log: LogEntry):
