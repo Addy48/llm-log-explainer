@@ -1,4 +1,4 @@
-const API_BASE = 'http://llm-service:8000';
+const API_BASE = 'http://localhost:8000';
 let logsList = [];
 let explanationsList = [];
 
