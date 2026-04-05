@@ -3,90 +3,67 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Log Explainer - Enterprise Dashboard</title>
+    <title>LLM Log Explainer</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header class="header">
-            <div class="header-content">
+            <div class="header-left">
                 <h1>LLM Log Explainer</h1>
-                <p class="subtitle">Real-time Log Analysis & Severity Classification</p>
+                <p class="subtitle">Real-time log classification and root cause analysis</p>
             </div>
-            <div class="health-status">
-                <span id="service-status" class="status-indicator offline">Initializing...</span>
+            <div class="header-right">
+                <span id="service-status" class="status offline">✗ Offline</span>
             </div>
         </header>
 
-        <section class="control-panel">
+        <div class="controls-section">
             <div class="button-group">
-                <button class="btn btn-primary" onclick="generateRandomLog()">
-                    <span class="icon">⚡</span> Generate Random Log
-                </button>
-                <button class="btn btn-secondary" onclick="refreshLogs()">
-                    <span class="icon">🔄</span> Refresh
-                </button>
-                <button class="btn btn-danger" onclick="clearAll()">
-                    <span class="icon">🗑️</span> Clear All
-                </button>
+                <button id="generate-btn" class="btn btn-primary" onclick="generateRandomLog()">⚡ Generate Log</button>
+                <button id="refresh-btn" class="btn btn-secondary" onclick="refreshPage()">↻ Refresh</button>
+                <button id="clear-btn" class="btn btn-danger" onclick="clearAll()">✕ Clear All</button>
             </div>
 
-            <div class="scenario-group">
+            <div class="scenarios-section">
                 <h3>Failure Scenarios</h3>
                 <div class="scenario-buttons">
-                    <button class="btn btn-scenario" onclick="analyzeScenario('database_failure')">
-                        🗄️ Database Failure
-                    </button>
-                    <button class="btn btn-scenario" onclick="analyzeScenario('auth_breach')">
-                        🔐 Auth Breach
-                    </button>
-                    <button class="btn btn-scenario" onclick="analyzeScenario('memory_leak')">
-                        💾 Memory Leak
-                    </button>
-                    <button class="btn btn-scenario" onclick="analyzeScenario('api_overload')">
-                        📡 API Overload
-                    </button>
-                    <button class="btn btn-scenario" onclick="analyzeScenario('disk_failure')">
-                        💿 Disk Failure
-                    </button>
+                    <button class="scenario-btn" onclick="analyzeScenario('database_failure')">📊 Database Failure</button>
+                    <button class="scenario-btn" onclick="analyzeScenario('auth_breach')">🔐 Auth Breach</button>
+                    <button class="scenario-btn" onclick="analyzeScenario('memory_leak')">💾 Memory Leak</button>
+                    <button class="scenario-btn" onclick="analyzeScenario('api_overload')">⚠️ API Overload</button>
+                    <button class="scenario-btn" onclick="analyzeScenario('disk_failure')">💿 Disk Failure</button>
                 </div>
-            </div>
-        </section>
-
-        <section class="content-area">
-            <div class="panel logs-panel">
-                <div class="panel-header">
-                    <h2>Application Logs</h2>
-                    <span id="log-count" class="log-count">0 logs</span>
-                </div>
-                <div class="logs-container" id="logs-container">
-                    <div class="empty-state">
-                        <p>No logs yet. Click a button above to generate or analyze logs.</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="panel explanations-panel">
-                <div class="panel-header">
-                    <h2>AI Analysis & Explanations</h2>
-                    <span id="analysis-count" class="analysis-count">0 analyzed</span>
-                </div>
-                <div class="explanations-container" id="explanations-container">
-                    <div class="empty-state">
-                        <p>Explanations will appear here.</p>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <div id="loading-modal" class="modal hidden">
-            <div class="modal-content">
-                <div class="spinner"></div>
-                <p>Processing logs...</p>
             </div>
         </div>
 
-        <div id="error-toast" class="toast hidden"></div>
+        <div class="main-content">
+            <div class="panel logs-panel">
+                <div class="panel-header">
+                    <h2>Application Logs</h2>
+                    <span id="logs-count" class="count-badge">0 logs</span>
+                </div>
+                <div id="logs-container" class="logs-list">
+                    <div class="empty-state">No logs yet. Click "Generate Log" to start.</div>
+                </div>
+            </div>
+
+            <div class="panel analysis-panel">
+                <div class="panel-header">
+                    <h2>Analysis & Insights</h2>
+                    <span id="explanations-count" class="count-badge">0 analyzed</span>
+                </div>
+                <div id="explanations-container" class="explanations-list">
+                    <div class="empty-state">Explanations appear here.</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="loading" class="loading hidden">
+            <div class="spinner"></div>
+            <p>Processing logs...</p>
+        </div>
+        <div id="error-message" class="error-message hidden"></div>
     </div>
 
     <script src="app.js"></script>
