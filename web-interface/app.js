@@ -36,11 +36,10 @@ function updateServiceStatus(isOnline) {
 async function generateRandomLog() {
     showLoading(true);
     try {
+        clearContainers();
         const response = await fetch(API_BASE + '/fetch-and-explain');
         if (!response.ok) throw new Error('Failed to fetch log');
         const data = await response.json();
-        logsList = [];
-        explanationsList = [];
         addLogAndExplanation(data);
     } catch (error) {
         showError('Failed to generate log: ' + error.message);
@@ -52,16 +51,22 @@ async function generateRandomLog() {
 async function analyzeScenario(scenario) {
     showLoading(true);
     try {
+        clearContainers();
         const response = await fetch(API_BASE + '/fetch-and-explain?scenario=' + scenario);
         if (!response.ok) throw new Error('Failed to fetch scenario');
         const data = await response.json();
-        logsList = [];
-        explanationsList = [];
         
         if (data.explanations && Array.isArray(data.explanations)) {
             data.explanations.forEach(exp => {
-                addExplanationToUI(exp);
+                const logsContainer = document.getElementById('logs-container');
+                const explanationsContainer = document.getElementById('explanations-container');
+                
+                const explanationItem = createExplanationItem(exp);
+                explanationsContainer.appendChild(explanationItem);
+                
+                explanationsList.push(exp);
             });
+            
             if (data.summary || data.root_cause) {
                 addScenarioSummary(data);
             }
@@ -75,19 +80,21 @@ async function analyzeScenario(scenario) {
     }
 }
 
+function clearContainers() {
+    logsList = [];
+    explanationsList = [];
+    const logsContainer = document.getElementById('logs-container');
+    const explanationsContainer = document.getElementById('explanations-container');
+    logsContainer.innerHTML = '';
+    explanationsContainer.innerHTML = '';
+}
+
 function addLogAndExplanation(data) {
     const logData = data.log || data;
     const explanationData = data.explanation || data;
     
     const logsContainer = document.getElementById('logs-container');
     const explanationsContainer = document.getElementById('explanations-container');
-    
-    if (logsContainer.querySelector('.empty-state')) {
-        logsContainer.innerHTML = '';
-    }
-    if (explanationsContainer.querySelector('.empty-state')) {
-        explanationsContainer.innerHTML = '';
-    }
     
     const logItem = createLogItem(logData);
     const explanationItem = createExplanationItem(explanationData);
@@ -98,19 +105,6 @@ function addLogAndExplanation(data) {
     logsList.push(logData);
     explanationsList.push(explanationData);
     
-    updateCounts();
-}
-
-function addExplanationToUI(exp) {
-    const explanationsContainer = document.getElementById('explanations-container');
-    
-    if (explanationsContainer.querySelector('.empty-state')) {
-        explanationsContainer.innerHTML = '';
-    }
-    
-    const explanationItem = createExplanationItem(exp);
-    explanationsContainer.appendChild(explanationItem);
-    explanationsList.push(exp);
     updateCounts();
 }
 
@@ -147,20 +141,18 @@ function addScenarioSummary(data) {
     const explanationsContainer = document.getElementById('explanations-container');
     const summary = document.createElement('div');
     summary.className = 'explanation-item scenario-summary';
-    summary.style.background = 'rgba(37, 99, 235, 0.1)';
-    summary.style.borderLeft = '4px solid var(--primary)';
-    summary.style.marginTop = '20px';
+    summary.style.marginTop = '16px';
     
     let actions = '';
     if (data.recommended_actions && Array.isArray(data.recommended_actions)) {
-        actions = '<div style="margin-top: 12px;"><strong style="color: var(--primary);">Recommended Actions:</strong><ul style="margin-left: 20px; margin-top: 8px;">';
+        actions = '<div style="margin-top: 12px;"><strong style="color: #2563eb;">Recommended Actions:</strong><ul>';
         data.recommended_actions.forEach(function(a) {
-            actions += '<li style="margin-bottom: 8px;">' + a + '</li>';
+            actions += '<li>' + a + '</li>';
         });
         actions += '</ul></div>';
     }
     
-    summary.innerHTML = '<div style="color: var(--primary); font-weight: 700; margin-bottom: 10px;">Scenario Analysis: ' + (data.scenario || 'Unknown') + '</div><div class="explanation-text">' + (data.summary || '') + '</div><div class="suggestion-box"><strong>Root Cause:</strong><br>' + (data.root_cause || 'Analyzing...') + '</div>' + actions;
+    summary.innerHTML = '<div style="color: #2563eb; font-weight: 700; margin-bottom: 10px;">Scenario Analysis: ' + (data.scenario || 'Unknown') + '</div><div class="explanation-text">' + (data.summary || '') + '</div><div class="suggestion-box"><strong>Root Cause:</strong><br>' + (data.root_cause || 'Analyzing...') + '</div>' + actions;
     
     explanationsContainer.appendChild(summary);
 }
@@ -168,7 +160,7 @@ function addScenarioSummary(data) {
 function showLoading(show) {
     const loading = document.getElementById('loading');
     if (loading) {
-        loading.style.display = show ? 'block' : 'none';
+        loading.classList.toggle('hidden', !show);
     }
 }
 
@@ -176,8 +168,8 @@ function showError(message) {
     const error = document.getElementById('error-message');
     if (error) {
         error.textContent = message;
-        error.style.display = 'block';
-        setTimeout(() => { error.style.display = 'none'; }, 5000);
+        error.classList.remove('hidden');
+        setTimeout(() => { error.classList.add('hidden'); }, 5000);
     }
 }
 
@@ -193,8 +185,8 @@ function clearAll() {
     explanationsList = [];
     const logsContainer = document.getElementById('logs-container');
     const explanationsContainer = document.getElementById('explanations-container');
-    if (logsContainer) logsContainer.innerHTML = '<div class="empty-state">No logs yet. Click "Generate Random Log" to start.</div>';
-    if (explanationsContainer) explanationsContainer.innerHTML = '<div class="empty-state">Explanations will appear here.</div>';
+    logsContainer.innerHTML = '<div class="empty-state">No logs yet. Click "Generate Log" to start.</div>';
+    explanationsContainer.innerHTML = '<div class="empty-state">Explanations appear here.</div>';
     updateCounts();
 }
 
