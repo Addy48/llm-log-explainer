@@ -3,68 +3,97 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Log Explainer</title>
+    <title>LLM Log Explainer - Real-time Log Analysis</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <header class="header">
-            <div class="header-left">
-                <h1>LLM Log Explainer</h1>
-                <p class="subtitle">Real-time log classification and root cause analysis</p>
-            </div>
-            <div class="header-right">
-                <span id="service-status" class="status offline">✗ Offline</span>
+    <div class="app">
+        <header class="app-header">
+            <div class="header-content">
+                <div class="branding">
+                    <h1>Log Explainer</h1>
+                    <p class="tagline">Real-time classification and root cause analysis</p>
+                </div>
+                <div class="header-status">
+                    <span id="service-status" class="status-badge offline">● Offline</span>
+                </div>
             </div>
         </header>
 
-        <div class="controls-section">
-            <div class="button-group">
-                <button id="generate-btn" class="btn btn-primary" onclick="generateRandomLog()">⚡ Generate Log</button>
-                <button id="refresh-btn" class="btn btn-secondary" onclick="refreshPage()">↻ Refresh</button>
-                <button id="clear-btn" class="btn btn-danger" onclick="clearAll()">✕ Clear All</button>
-            </div>
-
-            <div class="scenarios-section">
-                <h3>Failure Scenarios</h3>
-                <div class="scenario-buttons">
-                    <button class="scenario-btn" onclick="analyzeScenario('database_failure')">📊 Database Failure</button>
-                    <button class="scenario-btn" onclick="analyzeScenario('auth_breach')">🔐 Auth Breach</button>
-                    <button class="scenario-btn" onclick="analyzeScenario('memory_leak')">💾 Memory Leak</button>
-                    <button class="scenario-btn" onclick="analyzeScenario('api_overload')">⚠️ API Overload</button>
-                    <button class="scenario-btn" onclick="analyzeScenario('disk_failure')">💿 Disk Failure</button>
+        <div class="app-main">
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h2>Actions</h2>
+                    <button id="generate-btn" class="btn btn-primary" onclick="generateRandomLog()">Generate Log</button>
+                    <button id="refresh-btn" class="btn btn-secondary" onclick="refreshPage()">Refresh</button>
+                    <button id="clear-btn" class="btn btn-secondary" onclick="clearAll()">Clear All</button>
                 </div>
-            </div>
+
+                <div class="sidebar-section">
+                    <h2>Scenarios</h2>
+                    <div class="scenario-grid">
+                        <button class="scenario-card" onclick="analyzeScenario('database_failure')" title="Database connectivity issues">
+                            <span class="scenario-icon">🗄️</span>
+                            <span class="scenario-name">Database</span>
+                        </button>
+                        <button class="scenario-card" onclick="analyzeScenario('auth_breach')" title="Authentication and security">
+                            <span class="scenario-icon">🔐</span>
+                            <span class="scenario-name">Auth</span>
+                        </button>
+                        <button class="scenario-card" onclick="analyzeScenario('memory_leak')" title="Memory resource issues">
+                            <span class="scenario-icon">💾</span>
+                            <span class="scenario-name">Memory</span>
+                        </button>
+                        <button class="scenario-card" onclick="analyzeScenario('api_overload')" title="API capacity and scaling">
+                            <span class="scenario-icon">⚠️</span>
+                            <span class="scenario-name">Overload</span>
+                        </button>
+                        <button class="scenario-card" onclick="analyzeScenario('disk_failure')" title="Disk and storage failures">
+                            <span class="scenario-icon">💿</span>
+                            <span class="scenario-name">Disk</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="sidebar-section stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Logs Analyzed</span>
+                        <span id="logs-count" class="stat-value">0</span>
+                    </div>
+                </div>
+            </aside>
+
+            <main class="content">
+                <div class="panel logs-panel">
+                    <div class="panel-header">
+                        <h2>Logs</h2>
+                    </div>
+                    <div id="logs-container" class="logs-viewer">
+                        <div class="empty-state">
+                            <p>Click "Generate Log" or select a scenario to view logs.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel analysis-panel">
+                    <div class="panel-header">
+                        <h2>Analysis</h2>
+                    </div>
+                    <div id="explanations-container" class="analysis-viewer">
+                        <div class="empty-state">
+                            <p>Analysis results appear here.</p>
+                        </div>
+                    </div>
+                </div>
+            </main>
         </div>
-
-        <div class="main-content">
-            <div class="panel logs-panel">
-                <div class="panel-header">
-                    <h2>Application Logs</h2>
-                    <span id="logs-count" class="count-badge">0 logs</span>
-                </div>
-                <div id="logs-container" class="logs-list">
-                    <div class="empty-state">No logs yet. Click "Generate Log" to start.</div>
-                </div>
-            </div>
-
-            <div class="panel analysis-panel">
-                <div class="panel-header">
-                    <h2>Analysis & Insights</h2>
-                    <span id="explanations-count" class="count-badge">0 analyzed</span>
-                </div>
-                <div id="explanations-container" class="explanations-list">
-                    <div class="empty-state">Explanations appear here.</div>
-                </div>
-            </div>
-        </div>
-
-        <div id="loading" class="loading hidden">
-            <div class="spinner"></div>
-            <p>Processing logs...</p>
-        </div>
-        <div id="error-message" class="error-message hidden"></div>
     </div>
+
+    <div id="loading" class="toast toast-loading hidden">
+        <div class="spinner"></div>
+        <span>Processing...</span>
+    </div>
+    <div id="error-message" class="toast toast-error hidden"></div>
 
     <script src="app.js"></script>
 </body>
