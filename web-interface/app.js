@@ -23,11 +23,11 @@ async function checkServiceHealth() {
 function updateServiceStatus(isOnline) {
     const status = document.getElementById('service-status');
     if (isOnline) {
-        status.textContent = '✓ Services Online';
+        status.textContent = '● Online';
         status.classList.remove('offline');
         status.classList.add('online');
     } else {
-        status.textContent = '✗ Services Offline';
+        status.textContent = '● Offline';
         status.classList.remove('online');
         status.classList.add('offline');
     }
@@ -42,7 +42,7 @@ async function generateRandomLog() {
         const data = await response.json();
         addLogAndExplanation(data);
     } catch (error) {
-        showError('Failed to generate log: ' + error.message);
+        showError('Error: ' + error.message);
     } finally {
         showLoading(false);
     }
@@ -58,12 +58,9 @@ async function analyzeScenario(scenario) {
         
         if (data.explanations && Array.isArray(data.explanations)) {
             data.explanations.forEach(exp => {
-                const logsContainer = document.getElementById('logs-container');
                 const explanationsContainer = document.getElementById('explanations-container');
-                
                 const explanationItem = createExplanationItem(exp);
                 explanationsContainer.appendChild(explanationItem);
-                
                 explanationsList.push(exp);
             });
             
@@ -74,7 +71,7 @@ async function analyzeScenario(scenario) {
             addLogAndExplanation(data);
         }
     } catch (error) {
-        showError('Failed to analyze scenario: ' + error.message);
+        showError('Error: ' + error.message);
     } finally {
         showLoading(false);
     }
@@ -119,7 +116,13 @@ function createLogItem(log) {
     const line = log.context ? log.context.line : 'N/A';
     const processId = log.context ? log.context.process_id : 'N/A';
     
-    div.innerHTML = '<div class="log-timestamp">' + timestamp + '</div><div><span class="log-level ' + level + '">' + level + '</span><strong>' + message + '</strong></div><div class="log-context"><span class="log-context-item">Module: ' + module + '</span><span class="log-context-item">Line: ' + line + '</span><span class="log-context-item">PID: ' + processId + '</span></div>';
+    const levelBadge = '<span class="log-level-badge ' + level + '">' + level + '</span>';
+    const header = '<div class="log-header">' + levelBadge + '</div>';
+    const msg = '<div class="log-message">' + message + '</div>';
+    const context = '<div class="log-context-grid"><div class="log-context-item"><span class="log-context-label">Module:</span><span>' + module + '</span></div><div class="log-context-item"><span class="log-context-label">Line:</span><span>' + line + '</span></div><div class="log-context-item"><span class="log-context-label">PID:</span><span>' + processId + '</span></div></div>';
+    const ts = '<div class="log-timestamp">' + timestamp + '</div>';
+    
+    div.innerHTML = ts + header + msg + context;
     
     return div;
 }
@@ -132,7 +135,11 @@ function createExplanationItem(data) {
     const explanation = data.explanation || 'Processing...';
     const suggestion = data.suggestion || 'Monitor system status.';
     
-    div.innerHTML = '<div class="severity-badge ' + severity + '">' + severity.toUpperCase() + '</div><div class="explanation-text">' + explanation + '</div><div class="suggestion-box"><strong>Recommended Action:</strong><br>' + suggestion + '</div>';
+    const severityBadge = '<div class="severity-badge ' + severity + '">' + severity.toUpperCase() + '</div>';
+    const explanationText = '<div class="explanation-text">' + explanation + '</div>';
+    const suggestionBox = '<div class="suggestion-box"><strong>Action:</strong> ' + suggestion + '</div>';
+    
+    div.innerHTML = severityBadge + explanationText + suggestionBox;
     
     return div;
 }
@@ -141,18 +148,20 @@ function addScenarioSummary(data) {
     const explanationsContainer = document.getElementById('explanations-container');
     const summary = document.createElement('div');
     summary.className = 'explanation-item scenario-summary';
-    summary.style.marginTop = '16px';
     
     let actions = '';
     if (data.recommended_actions && Array.isArray(data.recommended_actions)) {
-        actions = '<div style="margin-top: 12px;"><strong style="color: #2563eb;">Recommended Actions:</strong><ul>';
+        actions = '<div class="scenario-actions"><h4>Recommended Actions</h4><ul>';
         data.recommended_actions.forEach(function(a) {
             actions += '<li>' + a + '</li>';
         });
         actions += '</ul></div>';
     }
     
-    summary.innerHTML = '<div style="color: #2563eb; font-weight: 700; margin-bottom: 10px;">Scenario Analysis: ' + (data.scenario || 'Unknown') + '</div><div class="explanation-text">' + (data.summary || '') + '</div><div class="suggestion-box"><strong>Root Cause:</strong><br>' + (data.root_cause || 'Analyzing...') + '</div>' + actions;
+    const rootCause = data.root_cause || 'Analyzing...';
+    const summaryText = data.summary || '';
+    
+    summary.innerHTML = '<div class="explanation-text">Scenario: ' + (data.scenario || 'Unknown') + '</div><div class="suggestion-box"><strong>Root Cause:</strong> ' + rootCause + '</div>' + (summaryText ? '<div class="explanation-text" style="margin-top: 8px; font-size: 11px; color: #6b7280;">' + summaryText + '</div>' : '') + actions;
     
     explanationsContainer.appendChild(summary);
 }
@@ -169,15 +178,13 @@ function showError(message) {
     if (error) {
         error.textContent = message;
         error.classList.remove('hidden');
-        setTimeout(() => { error.classList.add('hidden'); }, 5000);
+        setTimeout(() => { error.classList.add('hidden'); }, 4000);
     }
 }
 
 function updateCounts() {
     const logsCount = document.getElementById('logs-count');
-    const explCount = document.getElementById('explanations-count');
-    if (logsCount) logsCount.textContent = logsList.length + ' logs';
-    if (explCount) explCount.textContent = explanationsList.length + ' analyzed';
+    if (logsCount) logsCount.textContent = logsList.length;
 }
 
 function clearAll() {
@@ -185,8 +192,8 @@ function clearAll() {
     explanationsList = [];
     const logsContainer = document.getElementById('logs-container');
     const explanationsContainer = document.getElementById('explanations-container');
-    logsContainer.innerHTML = '<div class="empty-state">No logs yet. Click "Generate Log" to start.</div>';
-    explanationsContainer.innerHTML = '<div class="empty-state">Explanations appear here.</div>';
+    logsContainer.innerHTML = '<div class="empty-state"><p>Click "Generate Log" or select a scenario to view logs.</p></div>';
+    explanationsContainer.innerHTML = '<div class="empty-state"><p>Analysis results appear here.</p></div>';
     updateCounts();
 }
 
