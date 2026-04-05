@@ -57,7 +57,7 @@ async function analyzeScenario(scenario) {
             logsList = [];
             explanationsList = [];
             data.log_explanations.forEach(exp => {
-                addLogAndExplanation(exp);
+                addLogAndExplanation({log: exp, explanation: exp});
             });
             addScenarioSummary(data);
         } else {
@@ -71,8 +71,11 @@ async function analyzeScenario(scenario) {
 }
 
 function addLogAndExplanation(data) {
-    const logItem = createLogItem(data);
-    const explanationItem = createExplanationItem(data);
+    const logData = data.log || data;
+    const explanationData = data.explanation || data;
+    
+    const logItem = createLogItem(logData);
+    const explanationItem = createExplanationItem(explanationData);
     
     const logsContainer = document.getElementById('logs-container');
     const explanationsContainer = document.getElementById('explanations-container');
@@ -87,8 +90,8 @@ function addLogAndExplanation(data) {
     logsContainer.appendChild(logItem);
     explanationsContainer.appendChild(explanationItem);
     
-    logsList.push(data);
-    explanationsList.push(data);
+    logsList.push(logData);
+    explanationsList.push(explanationData);
     
     updateCounts();
 }
@@ -117,7 +120,7 @@ function createExplanationItem(data) {
     const explanation = data.explanation || 'No explanation available.';
     const suggestion = data.suggestion || 'Monitor system status.';
     
-    div.innerHTML = '<div class="severity-badge ' + severity + '">' + severity + '</div><div class="explanation-text">' + explanation + '</div><div class="suggestion-box"><strong>Recommended Action:</strong><br>' + suggestion + '</div>';
+    div.innerHTML = '<div class="severity-badge ' + severity + '">' + severity.toUpperCase() + '</div><div class="explanation-text">' + explanation + '</div><div class="suggestion-box"><strong>Recommended Action:</strong><br>' + suggestion + '</div>';
     
     return div;
 }
@@ -140,42 +143,42 @@ function addScenarioSummary(data) {
     
     summary.innerHTML = '<div style="color: var(--primary); font-weight: 700; margin-bottom: 10px;">Scenario Analysis: ' + (data.scenario || 'Unknown') + '</div><div class="explanation-text">' + (data.summary || '') + '</div><div class="suggestion-box"><strong>Root Cause:</strong><br>' + (data.root_cause || 'Analysis in progress...') + '</div>' + actions;
     
-    explanationsContainer.insertBefore(summary, explanationsContainer.firstChild);
+    explanationsContainer.appendChild(summary);
 }
 
-function refreshLogs() {
-    if (logsList.length > 0) {
-        generateRandomLog();
+function showLoading(show) {
+    const loading = document.getElementById('loading');
+    if (loading) {
+        loading.style.display = show ? 'block' : 'none';
     }
+}
+
+function showError(message) {
+    const error = document.getElementById('error-message');
+    if (error) {
+        error.textContent = message;
+        error.style.display = 'block';
+        setTimeout(() => { error.style.display = 'none'; }, 5000);
+    }
+}
+
+function updateCounts() {
+    const logsCount = document.getElementById('logs-count');
+    const explCount = document.getElementById('explanations-count');
+    if (logsCount) logsCount.textContent = logsList.length + ' logs';
+    if (explCount) explCount.textContent = explanationsList.length + ' analyzed';
 }
 
 function clearAll() {
     logsList = [];
     explanationsList = [];
-    document.getElementById('logs-container').innerHTML = '<div class="empty-state"><p>No logs yet. Click a button above to generate or analyze logs.</p></div>';
-    document.getElementById('explanations-container').innerHTML = '<div class="empty-state"><p>Explanations will appear here.</p></div>';
+    const logsContainer = document.getElementById('logs-container');
+    const explanationsContainer = document.getElementById('explanations-container');
+    if (logsContainer) logsContainer.innerHTML = '<div class="empty-state">No logs yet. Click "Generate Random Log" to start.</div>';
+    if (explanationsContainer) explanationsContainer.innerHTML = '<div class="empty-state">Explanations will appear here.</div>';
     updateCounts();
 }
 
-function updateCounts() {
-    document.getElementById('log-count').textContent = logsList.length + ' logs';
-    document.getElementById('analysis-count').textContent = explanationsList.length + ' analyzed';
-}
-
-function showLoading(show) {
-    const modal = document.getElementById('loading-modal');
-    if (show) {
-        modal.classList.remove('hidden');
-    } else {
-        modal.classList.add('hidden');
-    }
-}
-
-function showError(message) {
-    const toast = document.getElementById('error-toast');
-    toast.textContent = message;
-    toast.classList.remove('hidden');
-    setTimeout(function() {
-        toast.classList.add('hidden');
-    }, 5000);
+function refreshPage() {
+    location.reload();
 }
