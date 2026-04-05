@@ -39,6 +39,8 @@ async function generateRandomLog() {
         const response = await fetch(API_BASE + '/fetch-and-explain');
         if (!response.ok) throw new Error('Failed to fetch log');
         const data = await response.json();
+        logsList = [];
+        explanationsList = [];
         addLogAndExplanation(data);
     } catch (error) {
         showError('Failed to generate log: ' + error.message);
@@ -53,13 +55,16 @@ async function analyzeScenario(scenario) {
         const response = await fetch(API_BASE + '/fetch-and-explain?scenario=' + scenario);
         if (!response.ok) throw new Error('Failed to fetch scenario');
         const data = await response.json();
-        if (data.log_explanations) {
-            logsList = [];
-            explanationsList = [];
-            data.log_explanations.forEach(exp => {
-                addLogAndExplanation({log: exp, explanation: exp});
+        logsList = [];
+        explanationsList = [];
+        
+        if (data.explanations && Array.isArray(data.explanations)) {
+            data.explanations.forEach(exp => {
+                addExplanationToUI(exp);
             });
-            addScenarioSummary(data);
+            if (data.summary || data.root_cause) {
+                addScenarioSummary(data);
+            }
         } else {
             addLogAndExplanation(data);
         }
@@ -74,9 +79,6 @@ function addLogAndExplanation(data) {
     const logData = data.log || data;
     const explanationData = data.explanation || data;
     
-    const logItem = createLogItem(logData);
-    const explanationItem = createExplanationItem(explanationData);
-    
     const logsContainer = document.getElementById('logs-container');
     const explanationsContainer = document.getElementById('explanations-container');
     
@@ -87,12 +89,28 @@ function addLogAndExplanation(data) {
         explanationsContainer.innerHTML = '';
     }
     
+    const logItem = createLogItem(logData);
+    const explanationItem = createExplanationItem(explanationData);
+    
     logsContainer.appendChild(logItem);
     explanationsContainer.appendChild(explanationItem);
     
     logsList.push(logData);
     explanationsList.push(explanationData);
     
+    updateCounts();
+}
+
+function addExplanationToUI(exp) {
+    const explanationsContainer = document.getElementById('explanations-container');
+    
+    if (explanationsContainer.querySelector('.empty-state')) {
+        explanationsContainer.innerHTML = '';
+    }
+    
+    const explanationItem = createExplanationItem(exp);
+    explanationsContainer.appendChild(explanationItem);
+    explanationsList.push(exp);
     updateCounts();
 }
 
@@ -117,7 +135,7 @@ function createExplanationItem(data) {
     div.className = 'explanation-item';
     
     const severity = data.severity || 'low';
-    const explanation = data.explanation || 'No explanation available.';
+    const explanation = data.explanation || 'Processing...';
     const suggestion = data.suggestion || 'Monitor system status.';
     
     div.innerHTML = '<div class="severity-badge ' + severity + '">' + severity.toUpperCase() + '</div><div class="explanation-text">' + explanation + '</div><div class="suggestion-box"><strong>Recommended Action:</strong><br>' + suggestion + '</div>';
@@ -128,20 +146,21 @@ function createExplanationItem(data) {
 function addScenarioSummary(data) {
     const explanationsContainer = document.getElementById('explanations-container');
     const summary = document.createElement('div');
-    summary.className = 'explanation-item';
+    summary.className = 'explanation-item scenario-summary';
     summary.style.background = 'rgba(37, 99, 235, 0.1)';
     summary.style.borderLeft = '4px solid var(--primary)';
+    summary.style.marginTop = '20px';
     
     let actions = '';
-    if (data.recommended_actions) {
-        actions = '<div style="margin-top: 12px;"><strong style="color: var(--primary);">Actions:</strong><ul style="margin-left: 20px; margin-top: 8px;">';
+    if (data.recommended_actions && Array.isArray(data.recommended_actions)) {
+        actions = '<div style="margin-top: 12px;"><strong style="color: var(--primary);">Recommended Actions:</strong><ul style="margin-left: 20px; margin-top: 8px;">';
         data.recommended_actions.forEach(function(a) {
-            actions += '<li>' + a + '</li>';
+            actions += '<li style="margin-bottom: 8px;">' + a + '</li>';
         });
         actions += '</ul></div>';
     }
     
-    summary.innerHTML = '<div style="color: var(--primary); font-weight: 700; margin-bottom: 10px;">Scenario Analysis: ' + (data.scenario || 'Unknown') + '</div><div class="explanation-text">' + (data.summary || '') + '</div><div class="suggestion-box"><strong>Root Cause:</strong><br>' + (data.root_cause || 'Analysis in progress...') + '</div>' + actions;
+    summary.innerHTML = '<div style="color: var(--primary); font-weight: 700; margin-bottom: 10px;">Scenario Analysis: ' + (data.scenario || 'Unknown') + '</div><div class="explanation-text">' + (data.summary || '') + '</div><div class="suggestion-box"><strong>Root Cause:</strong><br>' + (data.root_cause || 'Analyzing...') + '</div>' + actions;
     
     explanationsContainer.appendChild(summary);
 }
