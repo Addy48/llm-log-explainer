@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LLM Log Explainer - Real-time Log Analysis</title>
+    <title>LLM Log Explainer - Enterprise Log Analysis</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,10 +11,14 @@
         <header class="app-header">
             <div class="header-content">
                 <div class="branding">
-                    <h1>Log Explainer</h1>
-                    <p class="tagline">Real-time classification and root cause analysis</p>
+                    <div class="logo">📊</div>
+                    <div>
+                        <h1>LogScope</h1>
+                        <p class="tagline">AI-Powered Log Analysis & Root Cause Detection</p>
+                    </div>
                 </div>
-                <div class="header-status">
+                <div class="header-controls">
+                    <input type="text" id="search-input" class="search-box" placeholder="Search logs..." onkeyup="filterLogs()">
                     <span id="service-status" class="status-badge offline">● Offline</span>
                 </div>
             </div>
@@ -23,14 +27,22 @@
         <div class="app-main">
             <aside class="sidebar">
                 <div class="sidebar-section">
-                    <h2>Actions</h2>
-                    <button id="generate-btn" class="btn btn-primary" onclick="generateRandomLog()">Generate Log</button>
-                    <button id="refresh-btn" class="btn btn-secondary" onclick="refreshPage()">Refresh</button>
-                    <button id="clear-btn" class="btn btn-secondary" onclick="clearAll()">Clear All</button>
+                    <h2>Quick Actions</h2>
+                    <button id="generate-btn" class="btn btn-primary" onclick="generateRandomLog()">
+                        <span class="btn-icon">⚡</span> Generate Log
+                    </button>
+                    <button id="batch-btn" class="btn btn-secondary" onclick="generateBatch()">
+                        <span class="btn-icon">📦</span> Batch (5 logs)
+                    </button>
+                    <div class="button-row">
+                        <button class="btn btn-sm" onclick="refreshPage()">↻ Refresh</button>
+                        <button class="btn btn-sm" onclick="exportLogs()">⬇️ Export</button>
+                        <button class="btn btn-sm" onclick="clearAll()">✕ Clear</button>
+                    </div>
                 </div>
 
                 <div class="sidebar-section">
-                    <h2>Scenarios</h2>
+                    <h2>Failure Scenarios</h2>
                     <div class="scenario-grid">
                         <button class="scenario-card" onclick="analyzeScenario('database_failure')" title="Database connectivity issues">
                             <span class="scenario-icon">🗄️</span>
@@ -38,7 +50,7 @@
                         </button>
                         <button class="scenario-card" onclick="analyzeScenario('auth_breach')" title="Authentication and security">
                             <span class="scenario-icon">🔐</span>
-                            <span class="scenario-name">Auth</span>
+                            <span class="scenario-name">Security</span>
                         </button>
                         <button class="scenario-card" onclick="analyzeScenario('memory_leak')" title="Memory resource issues">
                             <span class="scenario-icon">💾</span>
@@ -50,38 +62,64 @@
                         </button>
                         <button class="scenario-card" onclick="analyzeScenario('disk_failure')" title="Disk and storage failures">
                             <span class="scenario-icon">💿</span>
-                            <span class="scenario-name">Disk</span>
+                            <span class="scenario-name">Storage</span>
                         </button>
                     </div>
                 </div>
 
-                <div class="sidebar-section stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Logs Analyzed</span>
-                        <span id="logs-count" class="stat-value">0</span>
+                <div class="sidebar-section">
+                    <h2>Statistics</h2>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-label">Total Logs</div>
+                            <div id="logs-count" class="stat-value">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Critical</div>
+                            <div id="critical-count" class="stat-value critical">0</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-label">Warnings</div>
+                            <div id="warning-count" class="stat-value warning">0</div>
+                        </div>
                     </div>
+                </div>
+
+                <div class="sidebar-section filters">
+                    <h2>Filters</h2>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="filter-high" checked onchange="filterLogs()"> High
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="filter-medium" checked onchange="filterLogs()"> Medium
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="filter-low" checked onchange="filterLogs()"> Low
+                    </label>
                 </div>
             </aside>
 
             <main class="content">
                 <div class="panel logs-panel">
                     <div class="panel-header">
-                        <h2>Logs</h2>
+                        <h2>Application Logs</h2>
+                        <span class="panel-info" id="logs-info">Ready</span>
                     </div>
                     <div id="logs-container" class="logs-viewer">
                         <div class="empty-state">
-                            <p>Click "Generate Log" or select a scenario to view logs.</p>
+                            <p>🚀 Generate a log or select a scenario to begin analysis.</p>
                         </div>
                     </div>
                 </div>
 
                 <div class="panel analysis-panel">
                     <div class="panel-header">
-                        <h2>Analysis</h2>
+                        <h2>AI Analysis & Insights</h2>
+                        <span class="panel-info" id="analysis-info">Ready</span>
                     </div>
                     <div id="explanations-container" class="analysis-viewer">
                         <div class="empty-state">
-                            <p>Analysis results appear here.</p>
+                            <p>📈 Insights appear here.</p>
                         </div>
                     </div>
                 </div>
@@ -91,9 +129,10 @@
 
     <div id="loading" class="toast toast-loading hidden">
         <div class="spinner"></div>
-        <span>Processing...</span>
+        <span>Analyzing...</span>
     </div>
     <div id="error-message" class="toast toast-error hidden"></div>
+    <div id="success-message" class="toast toast-success hidden"></div>
 
     <script src="app.js"></script>
 </body>
