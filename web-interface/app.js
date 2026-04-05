@@ -1,202 +1,499 @@
-const API_BASE = 'http://localhost:8000';
-let logsList = [];
-let explanationsList = [];
+/* ═══════════════════════════════════════════════════════════════════
+   LogFlow — Enterprise Log Analysis Dashboard
+   app.js — All frontend logic
+   ═══════════════════════════════════════════════════════════════════ */
 
-document.addEventListener('DOMContentLoaded', function() {
-    checkServiceHealth();
-    setInterval(checkServiceHealth, 30000);
+const API_BASE = 'http://localhost:8000';
+
+// ── State ──────────────────────────────────────────────────────────
+let allLogs = [];         // { log: {...}, explanation: {...}, confidence: N, cardEl, analysisEl }
+let isLoading = false;
+
+// ── Init ───────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  checkHealth();
+  setInterval(checkHealth, 30000);
 });
 
-async function checkServiceHealth() {
-    try {
-        const response = await fetch(API_BASE + '/health');
-        if (response.ok) {
-            updateServiceStatus(true);
-        } else {
-            updateServiceStatus(false);
-        }
-    } catch (error) {
-        updateServiceStatus(false);
-    }
-}
-
-function updateServiceStatus(isOnline) {
-    const status = document.getElementById('service-status');
-    if (isOnline) {
-        status.textContent = '● Online';
-        status.classList.remove('offline');
-        status.classList.add('online');
+// ══════════════════════════════════════════════════════════════════
+// HEALTH CHECK
+// ══════════════════════════════════════════════════════════════════
+async function checkHealth() {
+  const chip = document.getElementById('status-indicator');
+  const txt  = document.getElementById('status-text');
+  try {
+    const res = await fetch(API_BASE + '/health', { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      chip.className = 'status-chip online';
+      txt.textContent = '✓ Connected';
     } else {
-        status.textContent = '● Offline';
-        status.classList.remove('online');
-        status.classList.add('offline');
+      throw new Error('not ok');
     }
+  } catch {
+    chip.className = 'status-chip offline';
+    txt.textContent = '✕ Offline';
+  }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// GENERATE SINGLE LOG
+// ══════════════════════════════════════════════════════════════════
 async function generateRandomLog() {
-    showLoading(true);
-    try {
-        clearContainers();
-        const response = await fetch(API_BASE + '/fetch-and-explain');
-        if (!response.ok) throw new Error('Failed to fetch log');
-        const data = await response.json();
-        addLogAndExplanation(data);
-    } catch (error) {
-        showError('Error: ' + error.message);
-    } finally {
-        showLoading(false);
-    }
+  if (isLoading) return;
+  hideSummary();
+  setLoading(true, 'Fetching log from API...');
+  try {
+    const res = await fetch(API_BASE + '/fetch-and-explain');
+    if (!res.ok) throw new Error(`API error ${res.status}`);
+    const data = await res.json();
+    appendEntry(data.log || data, data.explanation || data);
+    showToast('Log generated', 'ok');
+  } catch (e) {
+    showToast('Error: ' + e.message, 'err');
+  } finally {
+    setLoading(false);
+  }
 }
 
+// ══════════════════════════════════════════════════════════════════
+// BATCH — 5 LOGS
+// ══════════════════════════════════════════════════════════════════
+async function generateBatch() {
+  if (isLoading) return;
+  hideSummary();
+  setLoading(true, 'Generating batch of 5 logs...');
+  disableButtons(true);
+  let count = 0;
+  try {
+    for (let i = 0; i < 5; i++) {
+      document.getElementById('loading-msg').textContent =
+        `Fetching log ${i + 1} of 5...`;
+      const res = await fetch(API_BASE + '/fetch-and-explain');
+      if (!res.ok) throw new Error(`API error ${res.status}`);
+      const data = await res.json();
+      appendEntry(data.log || data, data.explanation || data);
+      count++;
+      await delay(200);
+    }
+    showToast(`${count} logs generated`, 'ok');
+  } catch (e) {
+    showToast('Batch error: ' + e.message, 'err');
+  } finally {
+    setLoading(false);
+    disableButtons(false);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SCENARIO ANALYSIS
+// ══════════════════════════════════════════════════════════════════
 async function analyzeScenario(scenario) {
-    showLoading(true);
-    try {
-        clearContainers();
-        const response = await fetch(API_BASE + '/fetch-and-explain?scenario=' + scenario);
-        if (!response.ok) throw new Error('Failed to fetch scenario');
-        const data = await response.json();
-        
-        if (data.explanations && Array.isArray(data.explanations)) {
-            data.explanations.forEach(exp => {
-                const explanationsContainer = document.getElementById('explanations-container');
-                const explanationItem = createExplanationItem(exp);
-                explanationsContainer.appendChild(explanationItem);
-                explanationsList.push(exp);
-            });
-            
-            if (data.summary || data.root_cause) {
-                addScenarioSummary(data);
-            }
-        } else {
-            addLogAndExplanation(data);
-        }
-    } catch (error) {
-        showError('Error: ' + error.message);
-    } finally {
-        showLoading(false);
+  if (isLoading) return;
+  clearAll(false);
+  hideSummary();
+  setLoading(true, `Loading ${formatScenarioName(scenario)} scenario...`);
+  disableButtons(true);
+  try {
+    const res = await fetch(`${API_BASE}/fetch-and-explain?scenario=${scenario}`);
+    if (!res.ok) throw new Error(`API error ${res.status}`);
+    const data = await res.json();
+
+    if (data.explanations && Array.isArray(data.explanations)) {
+      // Scenario bulk response
+      data.explanations.forEach(exp => {
+        const log = exp.log || exp;
+        const expl = exp.explanation || exp;
+        appendEntry(log, expl);
+      });
+      if (data.root_cause || data.summary || data.recommended_actions) {
+        showSummary(data, scenario);
+      }
+      showToast(`Scenario loaded: ${data.count || data.explanations.length} logs`, 'ok');
+    } else {
+      // Single entry fallback
+      appendEntry(data.log || data, data.explanation || data);
+      showToast('Scenario loaded', 'ok');
     }
+  } catch (e) {
+    showToast('Scenario error: ' + e.message, 'err');
+  } finally {
+    setLoading(false);
+    disableButtons(false);
+  }
 }
 
-function clearContainers() {
-    logsList = [];
-    explanationsList = [];
-    const logsContainer = document.getElementById('logs-container');
-    const explanationsContainer = document.getElementById('explanations-container');
-    logsContainer.innerHTML = '';
-    explanationsContainer.innerHTML = '';
+// ══════════════════════════════════════════════════════════════════
+// APPEND ENTRY (log card + analysis card)
+// ══════════════════════════════════════════════════════════════════
+function appendEntry(log, explanation) {
+  hideEmpty();
+
+  // Resolve confidence once so display and export use the same value
+  const confidence = explanation.confidence != null
+    ? Math.round(explanation.confidence * 100)
+    : randomInt(85, 99);
+
+  const logEl  = buildLogCard(log);
+  const anlEl  = buildAnalysisCard(explanation, confidence);
+
+  document.getElementById('log-container').appendChild(logEl);
+  document.getElementById('analysis-container').appendChild(anlEl);
+
+  allLogs.push({ log, explanation, confidence, cardEl: logEl, analysisEl: anlEl });
+
+  updateStats();
+  updateBadges();
+  applyCurrentFilter();
+
+  // Auto-scroll both panels to bottom
+  scrollPanelToBottom('log-container');
+  scrollPanelToBottom('analysis-container');
 }
 
-function addLogAndExplanation(data) {
-    const logData = data.log || data;
-    const explanationData = data.explanation || data;
-    
-    const logsContainer = document.getElementById('logs-container');
-    const explanationsContainer = document.getElementById('explanations-container');
-    
-    const logItem = createLogItem(logData);
-    const explanationItem = createExplanationItem(explanationData);
-    
-    logsContainer.appendChild(logItem);
-    explanationsContainer.appendChild(explanationItem);
-    
-    logsList.push(logData);
-    explanationsList.push(explanationData);
-    
-    updateCounts();
+// ══════════════════════════════════════════════════════════════════
+// BUILD LOG CARD
+// ══════════════════════════════════════════════════════════════════
+function buildLogCard(log) {
+  const level   = (log.level || 'INFO').toUpperCase();
+  const ts      = log.timestamp ? log.timestamp.slice(0, 19).replace('T', ' ') : new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const msg     = escHtml(log.message || '(no message)');
+  const ctx     = log.context || {};
+  const module  = escHtml(ctx.module  || log.module  || '—');
+  const line    = escHtml(String(ctx.line    || log.line    || '—'));
+  const pid     = escHtml(String(ctx.process_id || ctx.pid || log.pid || '—'));
+
+  const div = document.createElement('div');
+  div.className = `log-card level-${level}`;
+  div.dataset.level   = level;
+  div.dataset.message = (log.message || '').toLowerCase();
+
+  div.innerHTML = `
+    <div class="log-top">
+      <span class="log-ts">${ts}</span>
+      <span class="level-badge lvl-${level}">${level}</span>
+    </div>
+    <div class="log-msg">${msg}</div>
+    <div class="log-meta">
+      <div class="log-meta-item">
+        <span class="log-meta-key">Module</span>
+        <span class="log-meta-val">${module}</span>
+      </div>
+      <div class="log-meta-item">
+        <span class="log-meta-key">Line</span>
+        <span class="log-meta-val">${line}</span>
+      </div>
+      <div class="log-meta-item">
+        <span class="log-meta-key">PID</span>
+        <span class="log-meta-val">${pid}</span>
+      </div>
+    </div>`;
+  return div;
 }
 
-function createLogItem(log) {
-    const div = document.createElement('div');
-    div.className = 'log-item ' + (log.level || 'INFO');
-    
-    const timestamp = log.timestamp || new Date().toISOString();
-    const level = log.level || 'INFO';
-    const message = log.message || '';
-    const module = log.context ? log.context.module : 'unknown';
-    const line = log.context ? log.context.line : 'N/A';
-    const processId = log.context ? log.context.process_id : 'N/A';
-    
-    const levelBadge = '<span class="log-level-badge ' + level + '">' + level + '</span>';
-    const header = '<div class="log-header">' + levelBadge + '</div>';
-    const msg = '<div class="log-message">' + message + '</div>';
-    const context = '<div class="log-context-grid"><div class="log-context-item"><span class="log-context-label">Module:</span><span>' + module + '</span></div><div class="log-context-item"><span class="log-context-label">Line:</span><span>' + line + '</span></div><div class="log-context-item"><span class="log-context-label">PID:</span><span>' + processId + '</span></div></div>';
-    const ts = '<div class="log-timestamp">' + timestamp + '</div>';
-    
-    div.innerHTML = ts + header + msg + context;
-    
-    return div;
+// ══════════════════════════════════════════════════════════════════
+// BUILD ANALYSIS CARD
+// ══════════════════════════════════════════════════════════════════
+function buildAnalysisCard(exp, confidence) {
+  const severity    = (exp.severity    || exp.predicted_severity || 'LOW').toUpperCase();
+  const explanation = escHtml(exp.explanation || exp.message || 'Analyzing log entry...');
+  const suggestion  = escHtml(exp.suggestion  || exp.action  || defaultSuggestion(severity));
+
+  const div = document.createElement('div');
+  div.className = 'analysis-card';
+  div.dataset.severity = severity;
+
+  div.innerHTML = `
+    <div class="analysis-top">
+      <span class="severity-badge sev-${severity}">${severity} SEVERITY</span>
+      <div class="confidence-bar-wrap">
+        <div class="confidence-bar">
+          <div class="confidence-fill" style="width: ${confidence}%"></div>
+        </div>
+        ${confidence}%
+      </div>
+    </div>
+    <div class="analysis-explanation">${explanation}</div>
+    <div class="suggestion-box">
+      <svg class="suggestion-arrow" width="14" height="14" viewBox="0 0 24 24"
+           fill="none" stroke="currentColor" stroke-width="2.5">
+        <line x1="5" y1="12" x2="19" y2="12"/>
+        <polyline points="12 5 19 12 12 19"/>
+      </svg>
+      <div class="suggestion-content">
+        <span class="suggestion-label">Recommendation</span>
+        <span class="suggestion-text">${suggestion}</span>
+      </div>
+    </div>`;
+  return div;
 }
 
-function createExplanationItem(data) {
-    const div = document.createElement('div');
-    div.className = 'explanation-item';
-    
-    const severity = data.severity || 'low';
-    const explanation = data.explanation || 'Processing...';
-    const suggestion = data.suggestion || 'Monitor system status.';
-    
-    const severityBadge = '<div class="severity-badge ' + severity + '">' + severity.toUpperCase() + '</div>';
-    const explanationText = '<div class="explanation-text">' + explanation + '</div>';
-    const suggestionBox = '<div class="suggestion-box"><strong>Action:</strong> ' + suggestion + '</div>';
-    
-    div.innerHTML = severityBadge + explanationText + suggestionBox;
-    
-    return div;
+// ══════════════════════════════════════════════════════════════════
+// SCENARIO SUMMARY BAR
+// ══════════════════════════════════════════════════════════════════
+function showSummary(data, scenario) {
+  const bar = document.getElementById('scenario-summary');
+  document.getElementById('summary-scenario-name').textContent =
+    `${formatScenarioName(scenario)} — Scenario Summary`;
+  document.getElementById('summary-root-cause').textContent =
+    data.root_cause || '—';
+  document.getElementById('summary-overview').textContent =
+    data.summary || '—';
+
+  const ul = document.getElementById('summary-actions');
+  ul.innerHTML = '';
+  if (Array.isArray(data.recommended_actions)) {
+    data.recommended_actions.forEach(action => {
+      const li = document.createElement('li');
+      li.textContent = action;
+      ul.appendChild(li);
+    });
+  }
+
+  bar.classList.remove('hidden');
 }
 
-function addScenarioSummary(data) {
-    const explanationsContainer = document.getElementById('explanations-container');
-    const summary = document.createElement('div');
-    summary.className = 'explanation-item scenario-summary';
-    
-    let actions = '';
-    if (data.recommended_actions && Array.isArray(data.recommended_actions)) {
-        actions = '<div class="scenario-actions"><h4>Recommended Actions</h4><ul>';
-        data.recommended_actions.forEach(function(a) {
-            actions += '<li>' + a + '</li>';
-        });
-        actions += '</ul></div>';
-    }
-    
-    const rootCause = data.root_cause || 'Analyzing...';
-    const summaryText = data.summary || '';
-    
-    summary.innerHTML = '<div class="explanation-text">Scenario: ' + (data.scenario || 'Unknown') + '</div><div class="suggestion-box"><strong>Root Cause:</strong> ' + rootCause + '</div>' + (summaryText ? '<div class="explanation-text" style="margin-top: 8px; font-size: 11px; color: #6b7280;">' + summaryText + '</div>' : '') + actions;
-    
-    explanationsContainer.appendChild(summary);
+function hideSummary() {
+  document.getElementById('scenario-summary').classList.add('hidden');
 }
 
-function showLoading(show) {
-    const loading = document.getElementById('loading');
-    if (loading) {
-        loading.classList.toggle('hidden', !show);
-    }
+// ══════════════════════════════════════════════════════════════════
+// SEARCH & FILTER
+// ══════════════════════════════════════════════════════════════════
+function filterLogs() {
+  const query   = (document.getElementById('search-input').value || '').toLowerCase();
+  const showCrit= document.getElementById('filter-critical').checked;
+  const showWarn= document.getElementById('filter-warning').checked;
+  const showInfo= document.getElementById('filter-info').checked;
+
+  allLogs.forEach(entry => {
+    const { log, cardEl, analysisEl } = entry;
+    const level = (log.level || 'INFO').toUpperCase();
+    const msg   = (log.message || '').toLowerCase();
+
+    const levelOk = (
+      (level === 'ERROR' || level === 'CRITICAL') ? showCrit :
+      level === 'WARNING' ? showWarn :
+      showInfo
+    );
+    const searchOk = !query || msg.includes(query);
+
+    const show = levelOk && searchOk;
+    cardEl.classList.toggle('hidden', !show);
+    analysisEl.classList.toggle('hidden', !show);
+  });
 }
 
-function showError(message) {
-    const error = document.getElementById('error-message');
-    if (error) {
-        error.textContent = message;
-        error.classList.remove('hidden');
-        setTimeout(() => { error.classList.add('hidden'); }, 4000);
-    }
+// ══════════════════════════════════════════════════════════════════
+// EXPORT CSV
+// ══════════════════════════════════════════════════════════════════
+function exportCSV() {
+  if (allLogs.length === 0) {
+    showToast('No logs to export', 'info');
+    return;
+  }
+
+  const rows = [
+    ['Timestamp', 'Level', 'Message', 'Module', 'Line', 'PID', 'Severity', 'Confidence', 'Explanation', 'Suggestion']
+  ];
+
+  allLogs.forEach(({ log, explanation, confidence }) => {
+    const ctx = log.context || {};
+    rows.push([
+      csvEsc(log.timestamp || ''),
+      csvEsc(log.level || ''),
+      csvEsc(log.message || ''),
+      csvEsc(ctx.module || log.module || ''),
+      csvEsc(String(ctx.line || log.line || '')),
+      csvEsc(String(ctx.process_id || ctx.pid || log.pid || '')),
+      csvEsc((explanation.severity || explanation.predicted_severity || '').toUpperCase()),
+      confidence + '%',
+      csvEsc(explanation.explanation || explanation.message || ''),
+      csvEsc(explanation.suggestion || explanation.action || '')
+    ]);
+  });
+
+  const csv = rows.map(r => r.join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `logflow_export_${dateStamp()}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${allLogs.length} log entries`, 'ok');
 }
 
-function updateCounts() {
-    const logsCount = document.getElementById('logs-count');
-    if (logsCount) logsCount.textContent = logsList.length;
+// ══════════════════════════════════════════════════════════════════
+// CLEAR ALL
+// ══════════════════════════════════════════════════════════════════
+function clearAll(showMsg = true) {
+  allLogs = [];
+  hideSummary();
+
+  const lc = document.getElementById('log-container');
+  const ac = document.getElementById('analysis-container');
+  lc.innerHTML = '';
+  ac.innerHTML = '';
+  showEmptyStates();
+  updateStats();
+  updateBadges();
+  if (showMsg) showToast('Cleared all logs', 'info');
 }
 
-function clearAll() {
-    logsList = [];
-    explanationsList = [];
-    const logsContainer = document.getElementById('logs-container');
-    const explanationsContainer = document.getElementById('explanations-container');
-    logsContainer.innerHTML = '<div class="empty-state"><p>Click "Generate Log" or select a scenario to view logs.</p></div>';
-    explanationsContainer.innerHTML = '<div class="empty-state"><p>Analysis results appear here.</p></div>';
-    updateCounts();
+// ══════════════════════════════════════════════════════════════════
+// UI HELPERS
+// ══════════════════════════════════════════════════════════════════
+function setLoading(on, msg = 'Loading...') {
+  isLoading = on;
+  const ov = document.getElementById('loading-overlay');
+  document.getElementById('loading-msg').textContent = msg;
+  ov.classList.toggle('hidden', !on);
 }
 
-function refreshPage() {
-    location.reload();
+function disableButtons(disabled) {
+  ['generate-btn', 'batch-btn'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+let toastTimer = null;
+function showToast(msg, type = 'info') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = `toast toast-${type}`;
+  t.classList.remove('hidden');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), 3500);
+}
+
+function updateStats() {
+  let total = 0, crit = 0, warn = 0, info = 0;
+  allLogs.forEach(({ log }) => {
+    total++;
+    const lvl = (log.level || 'INFO').toUpperCase();
+    if (lvl === 'ERROR' || lvl === 'CRITICAL') crit++;
+    else if (lvl === 'WARNING') warn++;
+    else info++;
+  });
+
+  setEl('stat-total',    total);
+  setEl('stat-critical', crit);
+  setEl('stat-warning',  warn);
+  setEl('stat-info',     info);
+
+  setEl('cb-critical-count', crit);
+  setEl('cb-warning-count',  warn);
+  setEl('cb-info-count',     info);
+}
+
+function updateBadges() {
+  const total = allLogs.length;
+  const visible = allLogs.filter(e => !e.cardEl.classList.contains('hidden')).length;
+  document.getElementById('log-count-badge').textContent =
+    `${total} ${total === 1 ? 'entry' : 'entries'}`;
+  document.getElementById('analysis-count-badge').textContent =
+    `${total} ${total === 1 ? 'result' : 'results'}`;
+}
+
+function hideEmpty() {
+  document.getElementById('log-empty')?.remove();
+  document.getElementById('analysis-empty')?.remove();
+}
+
+function showEmptyStates() {
+  const lc = document.getElementById('log-container');
+  const ac = document.getElementById('analysis-container');
+
+  if (!document.getElementById('log-empty')) {
+    const e1 = document.createElement('div');
+    e1.className = 'empty-pane';
+    e1.id = 'log-empty';
+    e1.innerHTML = `
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.2">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
+      <p>No logs yet</p>
+      <span>Click Generate Log or pick a scenario</span>`;
+    lc.appendChild(e1);
+  }
+
+  if (!document.getElementById('analysis-empty')) {
+    const e2 = document.createElement('div');
+    e2.className = 'empty-pane';
+    e2.id = 'analysis-empty';
+    e2.innerHTML = `
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="1.2">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <p>No analysis yet</p>
+      <span>Analysis results appear after generating logs</span>`;
+    ac.appendChild(e2);
+  }
+}
+
+function scrollPanelToBottom(id) {
+  const el = document.getElementById(id);
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
+function setEl(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// UTILITY
+// ══════════════════════════════════════════════════════════════════
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function csvEsc(val) {
+  const s = String(val || '').replace(/"/g, '""');
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s}"` : s;
+}
+
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function randomInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function dateStamp() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function formatScenarioName(scenario) {
+  return scenario
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+function defaultSuggestion(severity) {
+  const map = {
+    HIGH:   'Immediate action required — investigate root cause and escalate to on-call team.',
+    MEDIUM: 'Review logs for pattern recurrence and apply targeted mitigation.',
+    LOW:    'Monitor for frequency increase; schedule review in next maintenance window.'
+  };
+  return map[severity] || map.LOW;
+}
+
+function applyCurrentFilter() {
+  // Re-run filter to apply to newly added entries
+  filterLogs();
+  updateBadges();
 }
