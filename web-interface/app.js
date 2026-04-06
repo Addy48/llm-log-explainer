@@ -134,7 +134,7 @@ function appendEntry(log, explanation) {
     : randomInt(85, 99);
 
   const logEl  = buildLogCard(log);
-  const anlEl  = buildAnalysisCard(explanation, confidence);
+  const anlEl  = buildAnalysisCard(explanation, confidence, log);
 
   document.getElementById('log-container').appendChild(logEl);
   document.getElementById('analysis-container').appendChild(anlEl);
@@ -193,10 +193,11 @@ function buildLogCard(log) {
 // ══════════════════════════════════════════════════════════════════
 // BUILD ANALYSIS CARD
 // ══════════════════════════════════════════════════════════════════
-function buildAnalysisCard(exp, confidence) {
+function buildAnalysisCard(exp, confidence, log) {
   const severity    = (exp.severity    || exp.predicted_severity || 'LOW').toUpperCase();
-  const explanation = escHtml(exp.explanation || exp.message || 'Analyzing log entry...');
-  const suggestion  = escHtml(exp.suggestion  || exp.action  || defaultSuggestion(severity));
+  const rawExp      = exp.explanation || exp.message || '';
+  const explanation = escHtml(cleanExplanation(rawExp, log));
+  const suggestion  = escHtml(exp.suggestion || exp.action || smartSuggestion(log, severity));
 
   const div = document.createElement('div');
   div.className = 'analysis-card';
@@ -483,10 +484,55 @@ function formatScenarioName(scenario) {
     .join(' ');
 }
 
-function defaultSuggestion(severity) {
+// Strip boilerplate API prefix: "WARNING: Potential issue detected. Message: X (Level: Y)"
+function cleanExplanation(raw, log) {
+  if (!raw) return 'Log entry analyzed by DistilBERT classification model.';
+  // Remove the generic wrapper the API wraps around messages
+  let text = raw
+    .replace(/^(ERROR|WARNING|INFO|CRITICAL):\s*Potential issue detected\.\s*Message:\s*/i, '')
+    .replace(/\s*\(Level:\s*(ERROR|WARNING|INFO|CRITICAL)\)\s*$/i, '')
+    .trim();
+  // If still generic or empty, build from log message
+  if (!text || text.length < 10) {
+    text = log && log.message ? `Classified log: "${log.message}"` : 'Log entry analyzed.';
+  }
+  return text;
+}
+
+// Context-aware recommendation based on log message keywords
+function smartSuggestion(log, severity) {
+  const msg = ((log && log.message) || '').toLowerCase();
+  const mod = ((log && (log.module || (log.context && log.context.module))) || '').toLowerCase();
+
+  if (msg.includes('connection pool') || msg.includes('connections in use'))
+    return 'Increase connection pool size and add connection timeout handling. Check for connection leaks.';
+  if (msg.includes('ssl') || msg.includes('certificate') || msg.includes('tls'))
+    return 'Renew or re-provision the SSL certificate. Verify CA chain and expiry date immediately.';
+  if (msg.includes('memory') || msg.includes('heap') || msg.includes('oom') || msg.includes('out of mem'))
+    return 'Trigger garbage collection, increase heap allocation, and profile for memory leaks.';
+  if (msg.includes('disk') || msg.includes('storage') || msg.includes('no space'))
+    return 'Free up disk space, archive old logs, and set up disk usage alerts at 80% threshold.';
+  if (msg.includes('database') || msg.includes('db ') || msg.includes('sql') || msg.includes('query'))
+    return 'Check DB connection health, review slow query logs, and verify replication status.';
+  if (msg.includes('auth') || msg.includes('login') || msg.includes('unauthorized') || msg.includes('forbidden'))
+    return 'Audit authentication logs for brute-force patterns. Verify token expiry and access control rules.';
+  if (msg.includes('timeout') || msg.includes('timed out'))
+    return 'Increase timeout thresholds and inspect downstream service latency. Add retry logic with backoff.';
+  if (msg.includes('rate limit') || msg.includes('429') || msg.includes('too many requests'))
+    return 'Implement request throttling on the client. Review API quota and add exponential backoff.';
+  if (msg.includes('cpu') || msg.includes('load') || msg.includes('overload'))
+    return 'Scale horizontally or increase CPU allocation. Profile for hot loops or blocking operations.';
+  if (msg.includes('config') || msg.includes('configuration') || msg.includes('environment'))
+    return 'Validate environment variables are correctly set. Compare against last known good configuration.';
+  if (msg.includes('restart') || msg.includes('crash') || msg.includes('exit'))
+    return 'Check process supervisor logs. Investigate crash dump and add health-check restart policy.';
+  if (msg.includes('network') || msg.includes('unreachable') || msg.includes('refused'))
+    return 'Verify network connectivity and firewall rules. Check service DNS resolution and port binding.';
+
+  // Severity fallback
   const map = {
     HIGH:   'Immediate action required — investigate root cause and escalate to on-call team.',
-    MEDIUM: 'Review logs for pattern recurrence and apply targeted mitigation.',
+    MEDIUM: 'Review logs for recurrence pattern and apply targeted mitigation before escalation.',
     LOW:    'Monitor for frequency increase; schedule review in next maintenance window.'
   };
   return map[severity] || map.LOW;
