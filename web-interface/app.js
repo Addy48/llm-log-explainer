@@ -565,3 +565,14 @@ function applyCurrentFilter() {
   filterLogs();
   updateBadges();
 }
+
+// Export current analysis as formatted JSON
+function exportAnalysisJSON(data) {
+    const jsonBlob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(jsonBlob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `log-analysis-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
