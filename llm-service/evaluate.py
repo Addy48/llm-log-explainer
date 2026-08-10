@@ -92,3 +92,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+def export_markdown_report(metrics_dict: dict, output_path: str = "eval_report.md"):
+    """Export formatted evaluation report for documentation and CI checks."""
+    with open(output_path, "w") as f:
+        f.write("# Model Evaluation Report\n\n")
+        f.write(f"- **Accuracy**: {metrics_dict.get('accuracy', 0.0):.4f}\n")
+        f.write(f"- **F1 Score**: {metrics_dict.get('f1', 0.0):.4f}\n")
+        f.write(f"- **Precision**: {metrics_dict.get('precision', 0.0):.4f}\n")
+        f.write(f"- **Recall**: {metrics_dict.get('recall', 0.0):.4f}\n")
