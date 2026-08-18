@@ -58,13 +58,5 @@ SCENARIO_PATTERNS = {
             'Check for corrupted filesystem',
             'Prepare for hardware replacement'
         ]
-    },
-    'redis_cache_stampede': {
-        'root_cause': 'Cache key TTL expired simultaneously under high concurrent traffic, causing a thundering herd where multiple threads bypass cache and saturate backend database.',
-        'actions': [
-            'Implement probabilistic early expiration (XFetch algorithm) on hot cache keys',
-            'Use distributed mutex locks (Redlock) so only one thread recomputes the cache value',
-            'Increase Redis connection pool sizing and configure stale-while-revalidate caching headers'
-        ]
     }
 }

@@ -5,23 +5,11 @@ import json
 import os
 from pydantic import BaseModel
 from typing import Optional
-import time
-from starlette.middleware.base import BaseHTTPMiddleware
-
-class TimingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        start = time.time()
-        response = await call_next(request)
-        process_time = time.time() - start
-        response.headers["X-Process-Time-Ms"] = f"{process_time * 1000:.2f}"
-        return response
-
 
 LOG_GENERATOR_URL = os.getenv("LOG_GENERATOR_URL", "http://log-generator:5000")
 MODEL_DIR = os.getenv("MODEL_DIR", "./models/distilbert-log")
 
 app = FastAPI()
-app.add_middleware(TimingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
