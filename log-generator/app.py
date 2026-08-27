@@ -101,6 +101,15 @@ SCENARIOS = {
         {'level': 'ERROR', 'message': 'File write failed: /var/data/cache.db - I/O error', 'module': 'file_handler', 'delay': 2},
         {'level': 'WARNING', 'message': 'Disk health critical: immediate replacement recommended', 'module': 'smart_monitor', 'delay': 0},
         {'level': 'INFO', 'message': 'Failover initiated: redirecting writes to backup volume /dev/sdb1', 'module': 'storage_manager', 'delay': 3}
+    ],
+    'redis_cache_stampede': [
+        {'level': 'INFO', 'message': 'Cache key TTL expired for session_cache_cluster', 'module': 'cache_manager', 'delay': 0},
+        {'level': 'WARNING', 'message': 'Sudden spike in backend database queries: 1400 queries/sec', 'module': 'db_monitor', 'delay': 1},
+        {'level': 'WARNING', 'message': 'Redis connection pool exhausted: 100/100 connections active', 'module': 'cache_service', 'delay': 2},
+        {'level': 'ERROR', 'message': 'Timeout waiting for Redis lock: key=product_catalog_v2', 'module': 'cache_service', 'delay': 2},
+        {'level': 'WARNING', 'message': 'Thundering herd detected: 850 concurrent requests recomputing identical key', 'module': 'traffic_analyzer', 'delay': 1},
+        {'level': 'ERROR', 'message': 'HTTP 504 Gateway Timeout returned to client', 'module': 'api_gateway', 'delay': 1},
+        {'level': 'INFO', 'message': 'Probabilistic early expiration (XFetch) enabled for cache keys', 'module': 'cache_manager', 'delay': 5}
     ]
 }
 
