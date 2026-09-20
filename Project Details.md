@@ -11,7 +11,7 @@
 
 This is everything you need to know about our project — what I've already built,
 what you need to build, how the pieces connect, and what commits to make.
-Feed this entire file to whatever LLM you're using (ChatGPT, Claude, anything)
+Feed this entire file to whatever LLM you're using (ChatGPT, or any LLM)
 and it'll have full context to help you. Don't start coding without giving your
 LLM this file first.
 
