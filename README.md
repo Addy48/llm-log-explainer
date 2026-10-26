@@ -10,6 +10,8 @@ Three Docker services: generate realistic app logs, classify/explain them, show 
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
 </p>
 
+[![AIOps Incident Drill](https://github.com/Addy48/llm-log-explainer/actions/workflows/incident-drill.yml/badge.svg)](https://github.com/Addy48/llm-log-explainer/actions/workflows/incident-drill.yml)
+
 ---
 
 ## Architecture
@@ -22,7 +24,7 @@ flowchart LR
 
 | Service | Role |
 |---------|------|
-| `log-generator` | Flask. Random logs + five failure scenarios |
+| `log-generator` | Flask. Random logs + six correlated failure scenarios |
 | `llm-service` | FastAPI. `/explain`, `/explain-batch`, `/fetch-and-explain` |
 | `web-interface` | Static dashboard |
 
@@ -39,7 +41,7 @@ Live `/explain` uses the rule engine in `llm-service/analyzer.py`. DistilBERT tr
 Sets up `.venv`, starts generator (:5001), API (:8000) and dashboard (:3000), opens the browser. `Ctrl+C` stops all.
 Optional LLM explanations: copy `.env.example` to `.env` and set `GROQ_API_KEY`.
 
-Tests: `.venv/bin/python -m pytest llm-service log-generator`
+Tests: `.venv/bin/python -m pytest llm-service log-generator scripts`
 
 ## How explanations work
 
@@ -70,6 +72,11 @@ GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/Addy48/llm-log-explainer.git
 
 ---
 
+
+## Cloud automation: AIOps incident drill
+
+The [GitHub Actions incident drill](docs/INCIDENT-DRILL.md) runs the project tests, builds the Docker Compose stack, and sends a selectable failure scenario through the real log generator and analyzer. Its job summary reports the diagnosis and a simulated release-gate decision; it does not deploy the app. Trigger it from **Actions → AIOps Incident Drill → Run workflow** and choose one of the six scenarios.
+
 ## API (short)
 
 **POST /explain**
@@ -80,7 +87,7 @@ GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/Addy48/llm-log-explainer.git
 
 Contract: [API-CONTRACT.md](API-CONTRACT.md)
 
-Generator also exposes `/generate`, `/generate/batch`, `/scenario/<name>` (`database_failure`, `auth_breach`, `memory_leak`, `api_overload`, `disk_failure`).
+Generator also exposes `/generate`, `/generate/batch`, `/scenario/<name>` (`database_failure`, `auth_breach`, `memory_leak`, `api_overload`, `disk_failure`, `redis_cache_stampede`).
 
 ---
 
