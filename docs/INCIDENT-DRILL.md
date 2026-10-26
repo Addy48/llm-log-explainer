@@ -30,7 +30,7 @@ This is an educational release-gate simulation. The repository has no deployment
 
 ## Run it on GitHub
 
-The workflow runs automatically for pull requests and pushes to `main`. To choose a scenario manually:
+The workflow runs automatically for pull requests and pushes to `main`. Once the workflow is merged into `main`, you can also choose a scenario manually:
 
 1. Open the repository's **Actions** tab.
 2. Select **AIOps Incident Drill**.

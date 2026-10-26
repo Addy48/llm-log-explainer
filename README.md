@@ -75,7 +75,7 @@ GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/Addy48/llm-log-explainer.git
 
 ## Cloud automation: AIOps incident drill
 
-The [GitHub Actions incident drill](docs/INCIDENT-DRILL.md) runs the project tests, builds the Docker Compose stack, and sends a selectable failure scenario through the real log generator and analyzer. Its job summary reports the diagnosis and a simulated release-gate decision; it does not deploy the app. Trigger it from **Actions → AIOps Incident Drill → Run workflow** and choose one of the six scenarios.
+The [GitHub Actions incident drill](docs/INCIDENT-DRILL.md) runs the project tests, builds the Docker Compose stack, and sends a selectable failure scenario through the real log generator and analyzer. Its job summary reports the diagnosis and a simulated release-gate decision; it does not deploy the app. Pull requests and pushes to `main` run it automatically. After the workflow is merged into `main`, use **Actions → AIOps Incident Drill → Run workflow** to select one of the six scenarios.
 
 ## API (short)
 
