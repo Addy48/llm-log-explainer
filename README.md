@@ -247,13 +247,14 @@ flowchart LR
   Event[Pull request / push / manual scenario] --> Runner[GitHub-hosted Ubuntu runner]
   Runner --> Tests[Install dependencies + pytest]
   Tests --> Compose[Validate Compose + build/start services]
-  Compose --> Drill[Replay selected incident through real API]
-  Drill --> Validate[Check expected category and incident fields]
+  Compose --> Generate[Fetch raw scenario logs from Flask :5001]
+  Generate --> Drill[POST logs to FastAPI /explain-batch without scenario hint]
+  Drill --> Validate[Check category inferred from log signals + incident fields]
   Validate --> Summary[Job summary + JSON artifact]
   Summary --> Cleanup[Compose down]
 ```
 
-The run validates the category, severity counts, health score, status, root cause, actions, and analyzed-log count. The job summary shows a **simulated** release decision: `critical → BLOCKED`, `degraded → REVIEW`, `stable → APPROVED`. A green job means the diagnosis check passed; it can still report `BLOCKED` because that is the correct simulated response to a critical incident. **No deployment, image publishing, or AWS access is configured.**
+The run fetches the selected raw scenario from Flask, then sends only the logs to FastAPI `/explain-batch`; the analyzer receives no scenario hint. It validates the category inferred from log content, severity counts, health score, status, root cause, actions, and analyzed-log count. The job summary makes the inference path explicit and shows a **simulated** release decision: `critical → BLOCKED`, `degraded → REVIEW`, `stable → APPROVED`. A green job means the diagnosis check passed; it can still report `BLOCKED` because that is the correct simulated response to a critical incident. **No deployment, image publishing, or AWS access is configured.**
 
 To run the same check locally, start the Compose stack first:
 

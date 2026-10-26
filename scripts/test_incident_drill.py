@@ -37,6 +37,7 @@ def test_critical_scenario_is_reported_as_simulated_release_block():
     assert assessment["expected_category"] == "database"
     assert assessment["gate_decision"] == "BLOCKED"
     assert assessment["validation"] == "passed"
+    assert assessment["diagnosis_method"] == "log-based inference; no scenario hint passed to analyzer"
 
 
 def test_wrong_diagnosis_fails_the_drill():
@@ -68,24 +69,62 @@ def test_release_gate_rejects_status_that_disagrees_with_severity_counts():
         drill.evaluate_incident("database_failure", result)
 
 
-def test_fetch_incident_retries_a_transient_reset_before_fetch(monkeypatch):
+def test_fetch_incident_posts_scenario_logs_without_scenario_hint(monkeypatch):
     drill = load_drill_module()
-    attempts = {"fetch": 0}
+    generated_logs = [{"level": "ERROR", "message": "Database connection timeout"}]
+    posted = {}
 
     def get_json(url):
-        if url.endswith("/health"):
+        if url == "http://api/health":
             return {"status": "healthy"}
-        if url.endswith("/scenarios"):
-            return {"available_scenarios": {"database_failure": {}}}
-        attempts["fetch"] += 1
-        if attempts["fetch"] == 1:
-            raise drill.TransientIncidentDrillError("connection reset")
+        if url == "http://api/scenarios":
+            return {"available_scenarios": {"database_failure": "Database outage"}}
+        if url == "http://generator/scenario/database_failure":
+            return {"logs": generated_logs, "log_count": 1, "scenario": "database_failure"}
+        raise AssertionError(f"unexpected GET {url}")
+
+    def post_json(url, payload, attempts, interval):
+        posted["url"] = url
+        posted["payload"] = payload
         return database_result()
 
     monkeypatch.setattr(drill, "_get_json", get_json)
-    monkeypatch.setattr(drill.time, "sleep", lambda _: None)
+    monkeypatch.setattr(drill, "_post_json_with_retry", post_json)
 
-    result = drill.fetch_incident("http://api", "database_failure", attempts=2)
+    result = drill.fetch_incident(
+        "http://api", "database_failure", generator_url="http://generator", attempts=1
+    )
 
     assert result == database_result()
-    assert attempts["fetch"] == 2
+    assert posted == {
+        "url": "http://api/explain-batch",
+        "payload": {"logs": generated_logs},
+    }
+
+
+def test_fetch_incident_retries_transient_generator_read(monkeypatch):
+    drill = load_drill_module()
+    generated_logs = [{"level": "ERROR", "message": "Database connection timeout"}]
+    generator_reads = {"count": 0}
+
+    def get_json(url):
+        if url == "http://api/health":
+            return {"status": "healthy"}
+        if url == "http://api/scenarios":
+            return {"available_scenarios": {"database_failure": "Database outage"}}
+        if url == "http://generator/scenario/database_failure":
+            generator_reads["count"] += 1
+            if generator_reads["count"] == 1:
+                raise drill.TransientIncidentDrillError("connection reset")
+            return {"logs": generated_logs, "log_count": 1, "scenario": "database_failure"}
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(drill, "_get_json", get_json)
+    monkeypatch.setattr(drill, "_post_json_with_retry", lambda *args: database_result())
+    monkeypatch.setattr(drill.time, "sleep", lambda _: None)
+
+    drill.fetch_incident(
+        "http://api", "database_failure", attempts=2, generator_url="http://generator"
+    )
+
+    assert generator_reads["count"] == 2

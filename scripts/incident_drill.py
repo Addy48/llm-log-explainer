@@ -10,8 +10,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 
 SCENARIO_CATEGORIES = {
@@ -99,6 +99,7 @@ def evaluate_incident(scenario: str, result: dict) -> dict:
         "scenario": scenario,
         "expected_category": expected_category,
         "validation": "passed",
+        "diagnosis_method": "log-based inference; no scenario hint passed to analyzer",
         "gate_decision": gate_decision,
         "log_count": count,
         "incident": incident,
@@ -116,7 +117,8 @@ def format_report(assessment: dict) -> str:
             "",
             f"- **Scenario:** `{assessment['scenario']}`",
             f"- **Diagnosis check:** {assessment['validation'].upper()} "
-            f"(expected `{assessment['expected_category']}`, got `{incident['category']}`)",
+            f"(expected `{assessment['expected_category']}`, got `{incident['category']}`; "
+            f"{assessment['diagnosis_method']})",
             f"- **Incident status:** {incident['status'].upper()}",
             f"- **Simulated release gate:** **{assessment['gate_decision']}**",
             f"- **Health score:** {incident['health_score']}/100",
@@ -159,12 +161,50 @@ def _get_json_with_retry(url: str, attempts: int = 30, interval: float = 1.0) ->
             last_error = str(error)
             if attempt + 1 < attempts:
                 time.sleep(interval)
+    raise IncidentDrillError(f"request failed after {attempts} attempts: {last_error}")
+
+
+def _post_json(url: str, payload: dict) -> dict:
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:
+            return json.load(response)
+    except HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        error_type = TransientIncidentDrillError if error.code in (502, 503, 504) else IncidentDrillError
+        raise error_type(f"API returned HTTP {error.code}: {detail}") from error
+    except (URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
+        raise TransientIncidentDrillError(f"could not read JSON from {url}: {error}") from error
+
+
+def _post_json_with_retry(url: str, payload: dict, attempts: int = 30, interval: float = 1.0) -> dict:
+    """Retry temporary transport and gateway failures while a service settles."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return _post_json(url, payload)
+        except TransientIncidentDrillError as error:
+            last_error = str(error)
+            if attempt + 1 < attempts:
+                time.sleep(interval)
     raise IncidentDrillError(f"API request failed after {attempts} attempts: {last_error}")
 
 
-def fetch_incident(api_url: str, scenario: str, attempts: int = 30, interval: float = 1.0) -> dict:
-    """Wait for the API and fetch one generated scenario through its real route."""
+def fetch_incident(
+    api_url: str,
+    scenario: str,
+    attempts: int = 30,
+    interval: float = 1.0,
+    generator_url: str = "http://127.0.0.1:5001",
+) -> dict:
+    """Fetch raw generated logs and ask the API to infer their incident category."""
     base_url = api_url.rstrip("/")
+    generator_base_url = generator_url.rstrip("/")
     last_error = None
     for _ in range(attempts):
         try:
@@ -182,8 +222,13 @@ def fetch_incident(api_url: str, scenario: str, attempts: int = 30, interval: fl
     else:
         raise IncidentDrillError(f"API did not become healthy after {attempts} attempts: {last_error}")
 
-    query = urlencode({"scenario": scenario})
-    return _get_json_with_retry(f"{base_url}/fetch-and-explain?{query}", attempts, interval)
+    scenario_data = _get_json_with_retry(
+        f"{generator_base_url}/scenario/{quote(scenario)}", attempts, interval
+    )
+    logs = scenario_data.get("logs")
+    if not isinstance(logs, list) or not logs:
+        raise IncidentDrillError(f"scenario '{scenario}' did not produce any logs")
+    return _post_json_with_retry(f"{base_url}/explain-batch", {"logs": logs}, attempts, interval)
 
 
 def write_summary(markdown: str) -> None:
@@ -197,11 +242,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=SCENARIO_CATEGORIES, required=True)
     parser.add_argument("--api-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--generator-url", default="http://127.0.0.1:5001")
     parser.add_argument("--report", type=Path, default=Path("incident-report.json"))
     args = parser.parse_args(argv)
 
     try:
-        result = fetch_incident(args.api_url, args.scenario)
+        result = fetch_incident(args.api_url, args.scenario, generator_url=args.generator_url)
         assessment = evaluate_incident(args.scenario, result)
         markdown = format_report(assessment)
         args.report.parent.mkdir(parents=True, exist_ok=True)

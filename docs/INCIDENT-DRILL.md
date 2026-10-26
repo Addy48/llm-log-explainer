@@ -10,7 +10,8 @@ GitHub Actions runner
         ├── installs Python dependencies and runs project tests
         ├── validates docker-compose.yml
         ├── builds and starts the three Docker services
-        └── calls llm-service /fetch-and-explain?scenario=<choice>
+        ├── fetches raw logs from log-generator /scenario/<choice>
+        └── posts logs to llm-service /explain-batch without a scenario hint
                     │
                     ├── log-generator creates correlated failure logs
                     └── llm-service classifies logs and aggregates an incident
@@ -18,7 +19,7 @@ GitHub Actions runner
                                 └── Actions summary + JSON artifact
 ```
 
-A diagnosis check passes when the selected scenario maps to the expected category and the API returns a valid incident summary with at least one high-severity line, a health score, a root cause, and recommended actions. A wrong category or incomplete summary fails the workflow.
+The drill fetches raw logs from the generator, then POSTs them to `/explain-batch` without a scenario hint. That forces the analyzer to infer a category from log content instead of echoing the selected scenario. The check passes only when the inferred category matches the expected category and the API returns a valid incident summary with at least one high-severity line, a health score, a root cause, and recommended actions. A wrong category or incomplete summary fails the workflow.
 
 The report also shows a **simulated release decision** from the incident status:
 
@@ -49,6 +50,8 @@ docker compose up -d --build
 python scripts/incident_drill.py --scenario database_failure
 # Try another scenario:
 python scripts/incident_drill.py --scenario memory_leak
+# If your ports differ, set the URLs explicitly:
+python scripts/incident_drill.py --scenario memory_leak --api-url http://127.0.0.1:8000 --generator-url http://127.0.0.1:5001
 # Stop the stack when finished:
 docker compose down
 ```
