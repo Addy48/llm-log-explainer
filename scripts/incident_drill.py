@@ -28,6 +28,10 @@ class IncidentDrillError(RuntimeError):
     """The incident drill could not produce or validate an expected diagnosis."""
 
 
+class TransientIncidentDrillError(IncidentDrillError):
+    """A temporary API/network condition that can succeed on retry."""
+
+
 def evaluate_incident(scenario: str, result: dict) -> dict:
     """Validate an API result and turn its incident status into a simulated gate."""
     if scenario not in SCENARIO_CATEGORIES:
@@ -139,9 +143,23 @@ def _get_json(url: str) -> dict:
             return json.load(response)
     except HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
-        raise IncidentDrillError(f"API returned HTTP {error.code}: {detail}") from error
-    except (URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise IncidentDrillError(f"could not read JSON from {url}: {error}") from error
+        error_type = TransientIncidentDrillError if error.code in (502, 503, 504) else IncidentDrillError
+        raise error_type(f"API returned HTTP {error.code}: {detail}") from error
+    except (URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
+        raise TransientIncidentDrillError(f"could not read JSON from {url}: {error}") from error
+
+
+def _get_json_with_retry(url: str, attempts: int = 30, interval: float = 1.0) -> dict:
+    """Retry temporary transport and gateway failures while a service settles."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            return _get_json(url)
+        except TransientIncidentDrillError as error:
+            last_error = str(error)
+            if attempt + 1 < attempts:
+                time.sleep(interval)
+    raise IncidentDrillError(f"API request failed after {attempts} attempts: {last_error}")
 
 
 def fetch_incident(api_url: str, scenario: str, attempts: int = 30, interval: float = 1.0) -> dict:
@@ -165,7 +183,7 @@ def fetch_incident(api_url: str, scenario: str, attempts: int = 30, interval: fl
         raise IncidentDrillError(f"API did not become healthy after {attempts} attempts: {last_error}")
 
     query = urlencode({"scenario": scenario})
-    return _get_json(f"{base_url}/fetch-and-explain?{query}")
+    return _get_json_with_retry(f"{base_url}/fetch-and-explain?{query}", attempts, interval)
 
 
 def write_summary(markdown: str) -> None:

@@ -57,4 +57,4 @@ The script writes `incident-report.json` and prints the same Markdown report tha
 
 ## Why this is more than a generic build pipeline
 
-The workflow does not stop at “the code builds.” It exercises the actual project behavior: a failure scenario becomes generated log lines, the API analyzes those lines, and the workflow checks the incident result and demonstrates a release decision. The same workflow also runs unit tests and builds the containers, so it combines CI with an AIOps-flavored operations check.
+The workflow does not stop at “the code builds.” It exercises the actual project behavior: a failure scenario becomes generated log lines, the API analyzes those lines, and the workflow checks the incident result and demonstrates a release decision. Compose healthchecks ensure the generator and API are ready before dependents start; the drill retries brief connection resets or gateway failures while the runner settles. The same workflow also runs unit tests and builds the containers, so it combines CI with an AIOps-flavored operations check.

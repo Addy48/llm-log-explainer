@@ -5,6 +5,12 @@ services:
     restart: unless-stopped
     ports:
       - "5001:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks:
       - llm-network
 
@@ -19,7 +25,14 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - LLM_MODEL=${LLM_MODEL:-openai/gpt-oss-120b}
     depends_on:
-      - log-generator
+      log-generator:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
     networks:
       - llm-network
 
@@ -30,7 +43,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - llm-service
+      llm-service:
+        condition: service_healthy
     networks:
       - llm-network
 

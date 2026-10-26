@@ -66,3 +66,26 @@ def test_release_gate_rejects_status_that_disagrees_with_severity_counts():
 
     with pytest.raises(drill.IncidentDrillError, match="status 'stable' does not match severity counts"):
         drill.evaluate_incident("database_failure", result)
+
+
+def test_fetch_incident_retries_a_transient_reset_before_fetch(monkeypatch):
+    drill = load_drill_module()
+    attempts = {"fetch": 0}
+
+    def get_json(url):
+        if url.endswith("/health"):
+            return {"status": "healthy"}
+        if url.endswith("/scenarios"):
+            return {"available_scenarios": {"database_failure": {}}}
+        attempts["fetch"] += 1
+        if attempts["fetch"] == 1:
+            raise drill.TransientIncidentDrillError("connection reset")
+        return database_result()
+
+    monkeypatch.setattr(drill, "_get_json", get_json)
+    monkeypatch.setattr(drill.time, "sleep", lambda _: None)
+
+    result = drill.fetch_incident("http://api", "database_failure", attempts=2)
+
+    assert result == database_result()
+    assert attempts["fetch"] == 2
