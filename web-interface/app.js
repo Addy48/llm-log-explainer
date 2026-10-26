@@ -1,578 +1,447 @@
-/* ═══════════════════════════════════════════════════════════════════
-   LogFlow — Enterprise Log Analysis Dashboard
-   app.js — All frontend logic
-   ═══════════════════════════════════════════════════════════════════ */
+/* Log Explainer dashboard logic. */
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = window.API_BASE || `${location.protocol}//${location.hostname || 'localhost'}:8000`;
 
-// ── State ──────────────────────────────────────────────────────────
-let allLogs = [];         // { log: {...}, explanation: {...}, confidence: N, cardEl, analysisEl }
-let isLoading = false;
+const SCENARIO_NAMES = {
+  database_failure: 'Database failure',
+  auth_breach: 'Brute-force login',
+  memory_leak: 'Memory leak',
+  api_overload: 'API overload',
+  disk_failure: 'Disk failure',
+  redis_cache_stampede: 'Cache stampede',
+};
 
-// ── Init ───────────────────────────────────────────────────────────
+const SAMPLE_PASTE = [
+  '2026-10-26T09:58:02Z INFO Request processed in 145ms: GET /api/orders',
+  '2026-10-26T09:58:40Z WARN Connection pool near capacity: 48/50 connections in use',
+  '2026-10-26T09:59:05Z WARN Slow query detected: SELECT took 3.2 seconds',
+  '2026-10-26T09:59:31Z ERROR Database connection timeout after 30 seconds',
+  '2026-10-26T09:59:32Z ERROR Deadlock detected in transaction processing',
+  '2026-10-26T10:00:10Z ERROR Critical service dependency unavailable: database',
+  '2026-10-26T10:00:12Z WARN Switching to degraded mode: read-only cache serving',
+].join('\n');
+
+const state = {
+  entries: [],        // { log, a }
+  incident: null,
+  source: null,       // { kind: 'scenario' | 'random' | 'paste', scenario? }
+  filter: 'ALL',
+  query: '',
+  openIndex: null,
+  keyLines: new Set(),
+  busy: false,
+  llmAvailable: false,
+};
+
+const $ = (id) => document.getElementById(id);
+
 document.addEventListener('DOMContentLoaded', () => {
-  checkHealth();
-  setInterval(checkHealth, 30000);
+  bind();
+  checkServices();
+  setInterval(checkServices, 20000);
 });
 
-// ══════════════════════════════════════════════════════════════════
-// HEALTH CHECK
-// ══════════════════════════════════════════════════════════════════
-async function checkHealth() {
-  const chip = document.getElementById('status-indicator');
-  const txt  = document.getElementById('status-text');
+function bind() {
+  document.querySelectorAll('[data-scenario]').forEach((b) =>
+    b.addEventListener('click', () => runScenario(b.dataset.scenario)));
+  $('btn-random').addEventListener('click', () => addRandom(1));
+  $('btn-batch').addEventListener('click', () => addRandom(10));
+  $('btn-paste').addEventListener('click', openPaste);
+  $('empty-paste').addEventListener('click', openPaste);
+  $('paste-close').addEventListener('click', () => { $('paste-panel').hidden = true; });
+  $('paste-sample').addEventListener('click', () => { $('paste-input').value = SAMPLE_PASTE; $('paste-input').focus(); });
+  $('paste-run').addEventListener('click', runPaste);
+  $('paste-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) runPaste();
+  });
+  $('btn-llm').addEventListener('click', explainWithLLM);
+  $('btn-export').addEventListener('click', exportCSV);
+  $('btn-clear').addEventListener('click', () => { clearAll(); toast('Cleared'); });
+  $('search').addEventListener('input', (e) => { state.query = e.target.value.trim().toLowerCase(); renderRows(); });
+  document.querySelectorAll('.seg-btn').forEach((b) => b.addEventListener('click', () => {
+    state.filter = b.dataset.sev;
+    document.querySelectorAll('.seg-btn').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    renderRows();
+  }));
+}
+
+// ── Services ────────────────────────────────────────────────────────
+async function checkServices() {
+  let health = null;
   try {
-    const res = await fetch(API_BASE + '/health', { signal: AbortSignal.timeout(5000) });
-    if (res.ok) {
-      chip.className = 'status-chip online';
-      txt.textContent = '✓ Connected';
-    } else {
-      throw new Error('not ok');
-    }
+    const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(4000) });
+    if (res.ok) health = await res.json();
+  } catch { /* offline */ }
+  setSvc('svc-api', health ? 'up' : 'down');
+
+  if (health) {
+    try {
+      const gen = await fetch(`${API_BASE}/scenarios`, { signal: AbortSignal.timeout(4000) });
+      setSvc('svc-gen', gen.ok ? 'up' : 'down');
+    } catch { setSvc('svc-gen', 'down'); }
+  } else {
+    setSvc('svc-gen', 'down');
+  }
+
+  state.llmAvailable = Boolean(health && health.llm_available);
+  setSvc('svc-llm', state.llmAvailable ? 'up' : 'off');
+  $('svc-llm-label').textContent = state.llmAvailable ? `LLM: ${health.llm_model}` : 'LLM off';
+  $('btn-llm').disabled = !state.llmAvailable;
+  $('btn-llm').title = state.llmAvailable ? '' : 'Set GROQ_API_KEY in .env and restart to enable';
+}
+
+function setSvc(id, s) { $(id).dataset.state = s; }
+
+// ── Data loading ────────────────────────────────────────────────────
+async function api(path, options) {
+  let res;
+  try {
+    res = await fetch(`${API_BASE}${path}`, options);
   } catch {
-    chip.className = 'status-chip offline';
-    txt.textContent = '✕ Offline';
+    throw new Error('Cannot reach the explainer API on port 8000. Is ./run_local.sh running?');
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `Request failed (${res.status})`);
+  return body;
+}
+
+const post = (path, data) => api(path, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+});
+
+async function withBusy(el, fn) {
+  if (state.busy) return;
+  state.busy = true;
+  const controls = document.querySelectorAll('.scenario, .side-actions .btn, #paste-run, .empty-actions .btn');
+  controls.forEach((c) => { c.disabled = true; });
+  if (el) el.setAttribute('aria-busy', 'true');
+  try { await fn(); } catch (e) { toast(e.message, 'err'); } finally {
+    state.busy = false;
+    controls.forEach((c) => { c.disabled = false; });
+    if (el) el.removeAttribute('aria-busy');
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// GENERATE SINGLE LOG
-// ══════════════════════════════════════════════════════════════════
-async function generateRandomLog() {
-  if (isLoading) return;
-  hideSummary();
-  setLoading(true, 'Fetching log from API...');
+function runScenario(name) {
+  const btn = document.querySelector(`.scenario[data-scenario="${name}"]`);
+  return withBusy(btn, async () => {
+    const data = await api(`/fetch-and-explain?scenario=${encodeURIComponent(name)}`);
+    loadBatch(data, { kind: 'scenario', scenario: name });
+    markScenario(name);
+  });
+}
+
+function addRandom(count) {
+  const btn = count > 1 ? $('btn-batch') : $('btn-random');
+  return withBusy(btn, async () => {
+    const data = await api(`/fetch-and-explain?count=${count}`);
+    const fresh = data.explanations
+      ? data.explanations.map((e) => ({ log: e.log, a: e.explanation }))
+      : [{ log: data.log, a: data.explanation }];
+    const keep = state.source && state.source.kind === 'random' ? state.entries : [];
+    const all = keep.concat(fresh);
+    const batch = await post('/explain-batch', { logs: all.map((e) => e.log) });
+    loadBatch(batch, { kind: 'random' }, keep.length);
+    markScenario(null);
+  });
+}
+
+function openPaste() {
+  $('paste-panel').hidden = false;
+  $('paste-input').focus();
+}
+
+function runPaste() {
+  const text = $('paste-input').value;
+  if (!text.trim()) { toast('Paste at least one log line first', 'err'); return; }
+  return withBusy($('paste-run'), async () => {
+    const data = await post('/analyze-text', { text });
+    loadBatch(data, { kind: 'paste' });
+    markScenario(null);
+    $('paste-panel').hidden = true;
+  });
+}
+
+function loadBatch(data, source, newFrom = 0) {
+  state.entries = data.explanations.map((e) => ({ log: e.log, a: e.explanation }));
+  state.incident = data.incident;
+  state.source = source;
+  state.openIndex = null;
+  state.keyLines = new Set();
+  resetLLM();
+  renderIncident();
+  renderRows(newFrom);
+}
+
+function markScenario(name) {
+  document.querySelectorAll('.scenario').forEach((b) =>
+    b.setAttribute('aria-current', String(b.dataset.scenario === name)));
+}
+
+function clearAll() {
+  state.entries = [];
+  state.incident = null;
+  state.source = null;
+  state.keyLines = new Set();
+  markScenario(null);
+  resetLLM();
+  renderIncident();
+  renderRows();
+}
+
+// ── Incident panel ──────────────────────────────────────────────────
+function incidentTitle() {
+  const s = state.source;
+  if (!s) return 'Incident';
+  if (s.kind === 'scenario') return SCENARIO_NAMES[s.scenario] || s.scenario;
+  if (s.kind === 'paste') return 'Pasted logs';
+  return 'Random log sample';
+}
+
+function renderIncident() {
+  const inc = state.incident;
+  $('incident').hidden = !inc || !state.entries.length;
+  if (!inc || !state.entries.length) return;
+
+  $('inc-title').textContent = incidentTitle();
+  const src = state.source.kind === 'paste' ? 'from pasted text' : 'generated by the log generator';
+  $('inc-sub').textContent = `${state.entries.length} lines ${src}. Click any bar or row to see why it was rated that way.`;
+
+  const pill = $('inc-status');
+  pill.dataset.status = inc.status;
+  pill.textContent = { critical: 'Critical', degraded: 'Degraded', stable: 'Stable' }[inc.status];
+
+  $('inc-health').textContent = inc.health_score;
+  $('inc-high').textContent = inc.severity_counts.HIGH;
+  $('inc-med').textContent = inc.severity_counts.MEDIUM;
+  $('inc-low').textContent = inc.severity_counts.LOW;
+  $('inc-duration').textContent = formatDuration(inc.duration_seconds);
+  $('inc-category').textContent = inc.category_label;
+  $('inc-category').title = inc.category_label;
+  $('inc-root').textContent = inc.root_cause;
+  fillList($('inc-actions'), inc.recommended_actions);
+
+  renderTimeline();
+}
+
+function renderTimeline() {
+  const tl = $('timeline');
+  tl.replaceChildren(...state.entries.map((e, i) => {
+    const t = document.createElement('button');
+    t.className = 'tick' + (state.keyLines.has(i) ? ' is-key' : '');
+    t.dataset.sev = e.a.severity;
+    t.setAttribute('role', 'listitem');
+    t.title = `#${i + 1} ${e.a.severity}: ${e.log.message}`;
+    t.setAttribute('aria-label', t.title);
+    t.addEventListener('click', () => openRow(i));
+    return t;
+  }));
+  const first = state.entries[0].log.timestamp;
+  const last = state.entries[state.entries.length - 1].log.timestamp;
+  const range = $('timeline-range');
+  range.textContent = first && last ? `${formatTime(first)} to ${formatTime(last)}` : '';
+  if (state.keyLines.size) range.append(el('span', 'key-legend', 'Key lines picked by the LLM'));
+}
+
+// ── LLM ─────────────────────────────────────────────────────────────
+function resetLLM() {
+  $('llm-model').textContent = '';
+  $('llm-body').replaceChildren(Object.assign(document.createElement('p'), {
+    className: 'muted',
+    textContent: state.llmAvailable
+      ? 'Ask the LLM to read these lines and explain the incident in plain language.'
+      : 'LLM is off. Add GROQ_API_KEY to .env and restart to enable it. The rule-based result above works without it.',
+  }));
+  $('btn-llm').hidden = false;
+}
+
+async function explainWithLLM() {
+  if (!state.entries.length) return;
+  const btn = $('btn-llm');
+  const body = $('llm-body');
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  body.innerHTML = '<div class="skeleton" aria-label="Waiting for the LLM"><span></span><span></span><span></span></div>';
   try {
-    const res = await fetch(API_BASE + '/fetch-and-explain');
-    if (!res.ok) throw new Error(`API error ${res.status}`);
-    const data = await res.json();
-    appendEntry(data.log || data, data.explanation || data);
-    showToast('Log generated', 'ok');
-  } catch (e) {
-    showToast('Error: ' + e.message, 'err');
-  } finally {
-    setLoading(false);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// BATCH — 5 LOGS
-// ══════════════════════════════════════════════════════════════════
-async function generateBatch() {
-  if (isLoading) return;
-  hideSummary();
-  setLoading(true, 'Generating batch of 5 logs...');
-  disableButtons(true);
-  let count = 0;
-  try {
-    for (let i = 0; i < 5; i++) {
-      document.getElementById('loading-msg').textContent =
-        `Fetching log ${i + 1} of 5...`;
-      const res = await fetch(API_BASE + '/fetch-and-explain');
-      if (!res.ok) throw new Error(`API error ${res.status}`);
-      const data = await res.json();
-      appendEntry(data.log || data, data.explanation || data);
-      count++;
-      await delay(200);
-    }
-    showToast(`${count} logs generated`, 'ok');
-  } catch (e) {
-    showToast('Batch error: ' + e.message, 'err');
-  } finally {
-    setLoading(false);
-    disableButtons(false);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// SCENARIO ANALYSIS
-// ══════════════════════════════════════════════════════════════════
-async function analyzeScenario(scenario) {
-  if (isLoading) return;
-  clearAll(false);
-  hideSummary();
-  setLoading(true, `Loading ${formatScenarioName(scenario)} scenario...`);
-  disableButtons(true);
-  try {
-    const res = await fetch(`${API_BASE}/fetch-and-explain?scenario=${scenario}`);
-    if (!res.ok) throw new Error(`API error ${res.status}`);
-    const data = await res.json();
-
-    if (data.explanations && Array.isArray(data.explanations)) {
-      // Scenario bulk response
-      data.explanations.forEach(exp => {
-        const log = exp.log || exp;
-        const expl = exp.explanation || exp;
-        appendEntry(log, expl);
-      });
-      if (data.root_cause || data.summary || data.recommended_actions) {
-        showSummary(data, scenario);
-      }
-      showToast(`Scenario loaded: ${data.count || data.explanations.length} logs`, 'ok');
-    } else {
-      // Single entry fallback
-      appendEntry(data.log || data, data.explanation || data);
-      showToast('Scenario loaded', 'ok');
-    }
-  } catch (e) {
-    showToast('Scenario error: ' + e.message, 'err');
-  } finally {
-    setLoading(false);
-    disableButtons(false);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════
-// APPEND ENTRY (log card + analysis card)
-// ══════════════════════════════════════════════════════════════════
-function appendEntry(log, explanation) {
-  hideEmpty();
-
-  // Resolve confidence once so display and export use the same value
-  const confidence = explanation.confidence != null
-    ? Math.round(explanation.confidence * 100)
-    : randomInt(85, 99);
-
-  const logEl  = buildLogCard(log);
-  const anlEl  = buildAnalysisCard(explanation, confidence, log);
-
-  document.getElementById('log-container').appendChild(logEl);
-  document.getElementById('analysis-container').appendChild(anlEl);
-
-  allLogs.push({ log, explanation, confidence, cardEl: logEl, analysisEl: anlEl });
-
-  updateStats();
-  updateBadges();
-  applyCurrentFilter();
-
-  // Auto-scroll both panels to bottom
-  scrollPanelToBottom('log-container');
-  scrollPanelToBottom('analysis-container');
-}
-
-// ══════════════════════════════════════════════════════════════════
-// BUILD LOG CARD
-// ══════════════════════════════════════════════════════════════════
-function buildLogCard(log) {
-  const level   = (log.level || 'INFO').toUpperCase();
-  const ts      = log.timestamp ? log.timestamp.slice(0, 19).replace('T', ' ') : new Date().toISOString().slice(0, 19).replace('T', ' ');
-  const msg     = escHtml(log.message || '(no message)');
-  const ctx     = log.context || {};
-  const module  = escHtml(ctx.module  || log.module  || '—');
-  const line    = escHtml(String(ctx.line    || log.line    || '—'));
-  const pid     = escHtml(String(ctx.process_id || ctx.pid || log.pid || '—'));
-
-  const div = document.createElement('div');
-  div.className = `log-card level-${level}`;
-  div.dataset.level   = level;
-  div.dataset.message = (log.message || '').toLowerCase();
-
-  div.innerHTML = `
-    <div class="log-top">
-      <span class="log-ts">${ts}</span>
-      <span class="level-badge lvl-${level}">${level}</span>
-    </div>
-    <div class="log-msg">${msg}</div>
-    <div class="log-meta">
-      <div class="log-meta-item">
-        <span class="log-meta-key">Module</span>
-        <span class="log-meta-val">${module}</span>
-      </div>
-      <div class="log-meta-item">
-        <span class="log-meta-key">Line</span>
-        <span class="log-meta-val">${line}</span>
-      </div>
-      <div class="log-meta-item">
-        <span class="log-meta-key">PID</span>
-        <span class="log-meta-val">${pid}</span>
-      </div>
-    </div>`;
-  return div;
-}
-
-// ══════════════════════════════════════════════════════════════════
-// BUILD ANALYSIS CARD
-// ══════════════════════════════════════════════════════════════════
-function buildAnalysisCard(exp, confidence, log) {
-  const severity    = (exp.severity    || exp.predicted_severity || 'LOW').toUpperCase();
-  const rawExp      = exp.explanation || exp.message || '';
-  const explanation = escHtml(cleanExplanation(rawExp, log, severity));
-  // Always use smart suggestion — the API returns a generic fallback for every entry
-  const suggestion  = escHtml(smartSuggestion(log, severity));
-
-  const div = document.createElement('div');
-  div.className = 'analysis-card';
-  div.dataset.severity = severity;
-
-  div.innerHTML = `
-    <div class="analysis-top">
-      <span class="severity-badge sev-${severity}">${severity} SEVERITY</span>
-      <div class="confidence-bar-wrap">
-        <div class="confidence-bar">
-          <div class="confidence-fill" style="width: ${confidence}%"></div>
-        </div>
-        ${confidence}%
-      </div>
-    </div>
-    <div class="analysis-explanation">${explanation}</div>
-    <div class="suggestion-box">
-      <svg class="suggestion-arrow" width="14" height="14" viewBox="0 0 24 24"
-           fill="none" stroke="currentColor" stroke-width="2.5">
-        <line x1="5" y1="12" x2="19" y2="12"/>
-        <polyline points="12 5 19 12 12 19"/>
-      </svg>
-      <div class="suggestion-content">
-        <span class="suggestion-label">Recommendation</span>
-        <span class="suggestion-text">${suggestion}</span>
-      </div>
-    </div>`;
-  return div;
-}
-
-// ══════════════════════════════════════════════════════════════════
-// SCENARIO SUMMARY BAR
-// ══════════════════════════════════════════════════════════════════
-function showSummary(data, scenario) {
-  const bar = document.getElementById('scenario-summary');
-  document.getElementById('summary-scenario-name').textContent =
-    `${formatScenarioName(scenario)} — Scenario Summary`;
-  document.getElementById('summary-root-cause').textContent =
-    data.root_cause || '—';
-  document.getElementById('summary-overview').textContent =
-    data.summary || '—';
-
-  const ul = document.getElementById('summary-actions');
-  ul.innerHTML = '';
-  if (Array.isArray(data.recommended_actions)) {
-    data.recommended_actions.forEach(action => {
-      const li = document.createElement('li');
-      li.textContent = action;
-      ul.appendChild(li);
+    const r = await post('/explain-incident-llm', {
+      logs: state.entries.map((e) => e.log),
+      scenario: state.source && state.source.scenario,
     });
+    const title = el('p', 'llm-title', r.title);
+    const summary = el('p', '', r.summary);
+    const rc = el('p', '', `Root cause: ${r.root_cause}`);
+    const list = document.createElement('ol');
+    fillList(list, r.recommended_actions);
+    body.replaceChildren(title, summary, rc, list);
+    $('llm-model').textContent = r.model;
+    state.keyLines = new Set(r.key_lines || []);
+    renderTimeline();
+    renderRows();
+    btn.hidden = true;
+  } catch (e) {
+    body.replaceChildren(el('p', 'llm-error', e.message));
+  } finally {
+    btn.disabled = !state.llmAvailable;
+    btn.removeAttribute('aria-busy');
   }
-
-  bar.classList.remove('hidden');
 }
 
-function hideSummary() {
-  document.getElementById('scenario-summary').classList.add('hidden');
+// ── Rows ────────────────────────────────────────────────────────────
+function visible(e) {
+  if (state.filter !== 'ALL' && e.a.severity !== state.filter) return false;
+  return !state.query || (e.log.message || '').toLowerCase().includes(state.query);
 }
 
-// ══════════════════════════════════════════════════════════════════
-// SEARCH & FILTER
-// ══════════════════════════════════════════════════════════════════
-function filterLogs() {
-  const query   = (document.getElementById('search-input').value || '').toLowerCase();
-  const showCrit= document.getElementById('filter-critical').checked;
-  const showWarn= document.getElementById('filter-warning').checked;
-  const showInfo= document.getElementById('filter-info').checked;
+function renderRows(newFrom = Infinity) {
+  const rows = $('rows');
+  const counts = { HIGH: 0, MEDIUM: 0, LOW: 0 };
+  state.entries.forEach((e) => { counts[e.a.severity]++; });
+  $('f-high').textContent = counts.HIGH;
+  $('f-med').textContent = counts.MEDIUM;
+  $('f-low').textContent = counts.LOW;
 
-  allLogs.forEach(entry => {
-    const { log, cardEl, analysisEl } = entry;
-    const level = (log.level || 'INFO').toUpperCase();
-    const msg   = (log.message || '').toLowerCase();
+  const shown = state.entries.map((e, i) => [e, i]).filter(([e]) => visible(e));
+  $('log-count').textContent = shown.length === state.entries.length
+    ? state.entries.length : `${shown.length} of ${state.entries.length}`;
+  document.querySelector('.logs').classList.toggle('has-rows', state.entries.length > 0);
 
-    const levelOk = (
-      (level === 'ERROR' || level === 'CRITICAL') ? showCrit :
-      level === 'WARNING' ? showWarn :
-      showInfo
-    );
-    const searchOk = !query || msg.includes(query);
-
-    const show = levelOk && searchOk;
-    cardEl.classList.toggle('hidden', !show);
-    analysisEl.classList.toggle('hidden', !show);
-  });
+  rows.replaceChildren(...shown.map(([e, i]) => buildRow(e, i, i >= newFrom)));
+  if (state.entries.length && !shown.length) {
+    rows.replaceChildren(el('p', 'muted', 'No lines match this filter.'));
+    rows.firstChild.style.padding = '20px 16px';
+  }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// EXPORT CSV
-// ══════════════════════════════════════════════════════════════════
+function buildRow(e, i, isNew) {
+  const { log, a } = e;
+  const row = document.createElement('div');
+  row.className = 'row' + (isNew ? ' is-new' : '') + (state.keyLines.has(i) ? ' is-key' : '');
+  row.id = `row-${i}`;
+  row.dataset.open = String(state.openIndex === i);
+  row.setAttribute('role', 'row');
+
+  const main = document.createElement('button');
+  main.className = 'tr row-main';
+  main.setAttribute('aria-expanded', String(state.openIndex === i));
+  main.innerHTML = `
+    <span class="c-time" role="cell">${esc(formatTime(log.timestamp) || '--')}</span>
+    <span class="c-level" role="cell" data-level="${esc(log.level)}">${esc(log.level)}</span>
+    <span class="c-msg" role="cell"><svg class="ic"><use href="#i-chevron"/></svg><span>${esc(log.message)}</span></span>
+    <span class="c-cat" role="cell">${esc(a.category_label)}</span>
+    <span role="cell"><span class="sev" data-sev="${a.severity}">${titleCase(a.severity)}</span></span>
+    <span class="conf" role="cell"><span class="conf-bar"><i style="width:${Math.round(a.confidence * 100)}%"></i></span>${Math.round(a.confidence * 100)}%</span>`;
+  main.addEventListener('click', () => toggleRow(i));
+  row.appendChild(main);
+
+  if (state.openIndex === i) row.appendChild(buildDetail(log, a));
+  return row;
+}
+
+function buildDetail(log, a) {
+  const ctx = log.context || {};
+  const d = document.createElement('div');
+  d.className = 'detail';
+  const signals = a.signals.length
+    ? a.signals.map((s) => `<span class="chip">${esc(s)}</span>`).join('')
+    : '<span class="muted">No known pattern words</span>';
+  const meta = [
+    ['Module', ctx.module], ['Line', ctx.line], ['PID', ctx.process_id], ['Thread', ctx.thread_id],
+    ['Request', log.request_id], ['Risk score', a.risk_score],
+  ].filter(([, v]) => v !== undefined && v !== null && v !== '');
+  d.innerHTML = `
+    <div>
+      <p class="full-msg">${esc(log.message)}</p>
+      <h4>Explanation</h4>
+      <p>${esc(a.explanation)}</p>
+      <h4 style="margin-top:10px">Suggested next step</h4>
+      <p>${esc(a.suggestion)}</p>
+    </div>
+    <div class="detail-side">
+      <div><h4>Matched signals</h4><div class="chips">${signals}</div></div>
+      <dl class="meta">${meta.map(([k, v]) => `<dt>${k}</dt><dd>${esc(String(v))}</dd>`).join('')}</dl>
+    </div>`;
+  return d;
+}
+
+function toggleRow(i) {
+  state.openIndex = state.openIndex === i ? null : i;
+  renderRows();
+}
+
+function openRow(i) {
+  if (!visible(state.entries[i])) {
+    state.filter = 'ALL';
+    state.query = '';
+    $('search').value = '';
+    document.querySelectorAll('.seg-btn').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.sev === 'ALL')));
+  }
+  state.openIndex = i;
+  renderRows();
+  const row = $(`row-${i}`);
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.querySelector('.row-main').focus({ preventScroll: true });
+}
+
+// ── Export ──────────────────────────────────────────────────────────
 function exportCSV() {
-  if (allLogs.length === 0) {
-    showToast('No logs to export', 'info');
-    return;
-  }
-
-  const rows = [
-    ['Timestamp', 'Level', 'Message', 'Module', 'Line', 'PID', 'Severity', 'Confidence', 'Explanation', 'Suggestion']
-  ];
-
-  allLogs.forEach(({ log, explanation, confidence }) => {
-    const ctx = log.context || {};
-    rows.push([
-      csvEsc(log.timestamp || ''),
-      csvEsc(log.level || ''),
-      csvEsc(log.message || ''),
-      csvEsc(ctx.module || log.module || ''),
-      csvEsc(String(ctx.line || log.line || '')),
-      csvEsc(String(ctx.process_id || ctx.pid || log.pid || '')),
-      csvEsc((explanation.severity || explanation.predicted_severity || '').toUpperCase()),
-      confidence + '%',
-      csvEsc(explanation.explanation || explanation.message || ''),
-      csvEsc(explanation.suggestion || explanation.action || '')
-    ]);
-  });
-
-  const csv = rows.map(r => r.join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `logflow_export_${dateStamp()}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  if (!state.entries.length) { toast('Nothing to export yet'); return; }
+  const head = ['Timestamp', 'Level', 'Message', 'Module', 'Category', 'Severity', 'Confidence', 'Signals', 'Explanation', 'Suggestion'];
+  const lines = state.entries.map(({ log, a }) => [
+    log.timestamp, log.level, log.message, (log.context || {}).module || '',
+    a.category_label, a.severity, a.confidence, a.signals.join(' '), a.explanation, a.suggestion,
+  ].map(csv).join(','));
+  const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement('a'), { href: url, download: `log-explainer-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv` });
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
   URL.revokeObjectURL(url);
-  showToast(`Exported ${allLogs.length} log entries`, 'ok');
+  toast(`Exported ${state.entries.length} lines`);
 }
 
-// ══════════════════════════════════════════════════════════════════
-// CLEAR ALL
-// ══════════════════════════════════════════════════════════════════
-function clearAll(showMsg = true) {
-  allLogs = [];
-  hideSummary();
-
-  const lc = document.getElementById('log-container');
-  const ac = document.getElementById('analysis-container');
-  lc.innerHTML = '';
-  ac.innerHTML = '';
-  showEmptyStates();
-  updateStats();
-  updateBadges();
-  if (showMsg) showToast('Cleared all logs', 'info');
+// ── Helpers ─────────────────────────────────────────────────────────
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  n.textContent = text;
+  return n;
 }
 
-// ══════════════════════════════════════════════════════════════════
-// UI HELPERS
-// ══════════════════════════════════════════════════════════════════
-function setLoading(on, msg = 'Loading...') {
-  isLoading = on;
-  const ov = document.getElementById('loading-overlay');
-  document.getElementById('loading-msg').textContent = msg;
-  ov.classList.toggle('hidden', !on);
+function fillList(list, items) {
+  list.replaceChildren(...(items || []).map((t) => el('li', '', t)));
 }
 
-function disableButtons(disabled) {
-  ['generate-btn', 'batch-btn'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.disabled = disabled;
-  });
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-let toastTimer = null;
-function showToast(msg, type = 'info') {
-  const t = document.getElementById('toast');
+function csv(v) {
+  const s = String(v ?? '');
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function titleCase(s) { return s.charAt(0) + s.slice(1).toLowerCase(); }
+
+function formatTime(ts) {
+  if (!ts) return '';
+  const m = String(ts).match(/T?(\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : '';
+}
+
+function formatDuration(sec) {
+  if (sec == null) return 'n/a';
+  if (sec < 60) return `${Math.round(sec)}s`;
+  const m = Math.floor(sec / 60);
+  return `${m}m ${Math.round(sec % 60)}s`;
+}
+
+let toastTimer;
+function toast(msg, type = 'ok') {
+  const t = $('toast');
   t.textContent = msg;
-  t.className = `toast toast-${type}`;
-  t.classList.remove('hidden');
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.add('hidden'), 3500);
-}
-
-function updateStats() {
-  let total = 0, crit = 0, warn = 0, info = 0;
-  allLogs.forEach(({ log }) => {
-    total++;
-    const lvl = (log.level || 'INFO').toUpperCase();
-    if (lvl === 'ERROR' || lvl === 'CRITICAL') crit++;
-    else if (lvl === 'WARNING') warn++;
-    else info++;
-  });
-
-  setEl('stat-total',    total);
-  setEl('stat-critical', crit);
-  setEl('stat-warning',  warn);
-  setEl('stat-info',     info);
-
-  setEl('cb-critical-count', crit);
-  setEl('cb-warning-count',  warn);
-  setEl('cb-info-count',     info);
-}
-
-function updateBadges() {
-  const total = allLogs.length;
-  const visible = allLogs.filter(e => !e.cardEl.classList.contains('hidden')).length;
-  document.getElementById('log-count-badge').textContent =
-    `${total} ${total === 1 ? 'entry' : 'entries'}`;
-  document.getElementById('analysis-count-badge').textContent =
-    `${total} ${total === 1 ? 'result' : 'results'}`;
-}
-
-function hideEmpty() {
-  document.getElementById('log-empty')?.remove();
-  document.getElementById('analysis-empty')?.remove();
-}
-
-function showEmptyStates() {
-  const lc = document.getElementById('log-container');
-  const ac = document.getElementById('analysis-container');
-
-  if (!document.getElementById('log-empty')) {
-    const e1 = document.createElement('div');
-    e1.className = 'empty-pane';
-    e1.id = 'log-empty';
-    e1.innerHTML = `
-      <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="1.2">
-        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-        <polyline points="14 2 14 8 20 8"/>
-      </svg>
-      <p>No logs yet</p>
-      <span>Click Generate Log or pick a scenario</span>`;
-    lc.appendChild(e1);
-  }
-
-  if (!document.getElementById('analysis-empty')) {
-    const e2 = document.createElement('div');
-    e2.className = 'empty-pane';
-    e2.id = 'analysis-empty';
-    e2.innerHTML = `
-      <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" stroke-width="1.2">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-        <line x1="12" y1="17" x2="12.01" y2="17"/>
-      </svg>
-      <p>No analysis yet</p>
-      <span>Analysis results appear after generating logs</span>`;
-    ac.appendChild(e2);
-  }
-}
-
-function scrollPanelToBottom(id) {
-  const el = document.getElementById(id);
-  if (el) el.scrollTop = el.scrollHeight;
-}
-
-function setEl(id, val) {
-  const el = document.getElementById(id);
-  if (el) el.textContent = val;
-}
-
-// ══════════════════════════════════════════════════════════════════
-// UTILITY
-// ══════════════════════════════════════════════════════════════════
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function csvEsc(val) {
-  const s = String(val || '').replace(/"/g, '""');
-  return s.includes(',') || s.includes('"') || s.includes('\n')
-    ? `"${s}"` : s;
-}
-
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-function randomInt(min, max) {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function dateStamp() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function formatScenarioName(scenario) {
-  return scenario
-    .split('_')
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-}
-
-// Generate a meaningful explanation from the log message and severity
-function cleanExplanation(raw, log, severity) {
-  const msg = (log && log.message) || '';
-  const level = (log && log.level || 'INFO').toUpperCase();
-  const mod = (log && ((log.context && log.context.module) || log.module)) || 'system';
-  const sev = (severity || 'LOW').toUpperCase();
-
-  if (!msg) return 'Log entry processed by DistilBERT classification model.';
-
-  const sevLabel = sev === 'HIGH' ? 'critical' : sev === 'MEDIUM' ? 'notable' : 'informational';
-
-  const m = msg.toLowerCase();
-  if (m.includes('connection pool') || m.includes('connections in use'))
-    return `${level} event in ${mod}: Connection pool utilisation is critically high. Sustained load at this level risks connection exhaustion and service degradation.`;
-  if (m.includes('ssl') || m.includes('certificate') || m.includes('tls'))
-    return `${level} event in ${mod}: SSL/TLS handshake failure detected. External service communication is at risk; requests may be silently dropped.`;
-  if (m.includes('memory') || m.includes('heap') || m.includes('oom'))
-    return `${level} event in ${mod}: Memory usage is abnormally high. Potential memory leak — if unaddressed, the process will be OOM-killed.`;
-  if (m.includes('disk') || m.includes('storage') || m.includes('no space'))
-    return `${level} event in ${mod}: Disk space critically low. Write operations will fail once storage is exhausted, causing data loss.`;
-  if (m.includes('database') || m.includes('db ') || m.includes('sql'))
-    return `${level} event in ${mod}: Database layer anomaly detected. Persistent failures here will affect all data-dependent operations.`;
-  if (m.includes('login') || m.includes('auth') || m.includes('unauthorized'))
-    return `${level} event in ${mod}: Authentication event flagged. DistilBERT model classified this as ${sevLabel} — monitor for repeated failures indicating a brute-force attempt.`;
-  if (m.includes('timeout') || m.includes('timed out'))
-    return `${level} event in ${mod}: Request timeout detected. Downstream service is slow or unresponsive, impacting end-user latency.`;
-  if (m.includes('config') || m.includes('configuration') || m.includes('environment'))
-    return `${level} event in ${mod}: Configuration state change observed. Verify that reloaded values are correct to prevent misconfiguration-induced failures.`;
-  if (m.includes('cpu') || m.includes('load') || m.includes('overload'))
-    return `${level} event in ${mod}: High CPU utilisation detected. Service throughput is degraded; auto-scaling may be required.`;
-  if (m.includes('restart') || m.includes('crash') || m.includes('start'))
-    return `${level} event in ${mod}: Process lifecycle event detected. DistilBERT classified severity as ${sevLabel} — verify service is stable after restart.`;
-
-  return `${level} event in ${mod}: DistilBERT model classified this as ${sevLabel} severity. The log pattern matches known ${sev.toLowerCase()}-severity signatures in the training data.`;
-}
-
-// Context-aware recommendation based on log message keywords
-function smartSuggestion(log, severity) {
-  const msg = ((log && log.message) || '').toLowerCase();
-  const mod = ((log && (log.module || (log.context && log.context.module))) || '').toLowerCase();
-
-  if (msg.includes('connection pool') || msg.includes('connections in use'))
-    return 'Increase connection pool size and add connection timeout handling. Check for connection leaks.';
-  if (msg.includes('ssl') || msg.includes('certificate') || msg.includes('tls'))
-    return 'Renew or re-provision the SSL certificate. Verify CA chain and expiry date immediately.';
-  if (msg.includes('memory') || msg.includes('heap') || msg.includes('oom') || msg.includes('out of mem'))
-    return 'Trigger garbage collection, increase heap allocation, and profile for memory leaks.';
-  if (msg.includes('disk') || msg.includes('storage') || msg.includes('no space'))
-    return 'Free up disk space, archive old logs, and set up disk usage alerts at 80% threshold.';
-  if (msg.includes('database') || msg.includes('db ') || msg.includes('sql') || msg.includes('query'))
-    return 'Check DB connection health, review slow query logs, and verify replication status.';
-  if (msg.includes('auth') || msg.includes('login') || msg.includes('unauthorized') || msg.includes('forbidden'))
-    return 'Audit authentication logs for brute-force patterns. Verify token expiry and access control rules.';
-  if (msg.includes('timeout') || msg.includes('timed out'))
-    return 'Increase timeout thresholds and inspect downstream service latency. Add retry logic with backoff.';
-  if (msg.includes('rate limit') || msg.includes('429') || msg.includes('too many requests'))
-    return 'Implement request throttling on the client. Review API quota and add exponential backoff.';
-  if (msg.includes('cpu') || msg.includes('load') || msg.includes('overload'))
-    return 'Scale horizontally or increase CPU allocation. Profile for hot loops or blocking operations.';
-  if (msg.includes('config') || msg.includes('configuration') || msg.includes('environment'))
-    return 'Validate environment variables are correctly set. Compare against last known good configuration.';
-  if (msg.includes('restart') || msg.includes('crash') || msg.includes('exit'))
-    return 'Check process supervisor logs. Investigate crash dump and add health-check restart policy.';
-  if (msg.includes('network') || msg.includes('unreachable') || msg.includes('refused'))
-    return 'Verify network connectivity and firewall rules. Check service DNS resolution and port binding.';
-
-  // Severity fallback
-  const map = {
-    HIGH:   'Immediate action required — investigate root cause and escalate to on-call team.',
-    MEDIUM: 'Review logs for recurrence pattern and apply targeted mitigation before escalation.',
-    LOW:    'Monitor for frequency increase; schedule review in next maintenance window.'
-  };
-  return map[severity] || map.LOW;
-}
-
-function applyCurrentFilter() {
-  // Re-run filter to apply to newly added entries
-  filterLogs();
-  updateBadges();
-}
-
-// Export current analysis as formatted JSON
-function exportAnalysisJSON(data) {
-    const jsonBlob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(jsonBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `log-analysis-${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  t.dataset.type = type;
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, type === 'err' ? 6000 : 2500);
 }

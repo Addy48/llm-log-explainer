@@ -234,7 +234,8 @@ def list_scenarios():
         'auth_breach': 'Simulates brute force login attempt with account lockout and security response',
         'memory_leak': 'Simulates gradual memory exhaustion leading to application crash',
         'api_overload': 'Simulates API rate limiting and auto-scaling response',
-        'disk_failure': 'Simulates disk degradation with SMART warnings and failover'
+        'disk_failure': 'Simulates disk degradation with SMART warnings and failover',
+        'redis_cache_stampede': 'Simulates cache expiry under load causing a thundering herd on the database'
     }
     return jsonify({
         'available_scenarios': scenario_descriptions,
@@ -285,4 +286,5 @@ def get_logs_for_explanation():
         })
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    import os
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), debug=False)

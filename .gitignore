@@ -5,3 +5,8 @@ logs/
 .DS_Store
 llm-service/raw_logs/
 web-interface/__pycache__/
+.venv/
+__pycache__/
+.pytest_cache/
+.impeccable/
+PRODUCT.md

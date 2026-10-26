@@ -26,11 +26,29 @@ flowchart LR
 | `llm-service` | FastAPI. `/explain`, `/explain-batch`, `/fetch-and-explain` |
 | `web-interface` | Static dashboard |
 
-Live `/explain` uses **scenario templates** in `llm-service/prompts.py`. DistilBERT training + `evaluate.py` live in `llm-service/` for the classifier track. Weights are Git LFS (`*.safetensors`) — optional, not required to bring the stack up.
+Live `/explain` uses the rule engine in `llm-service/analyzer.py`. DistilBERT training + `evaluate.py` are an optional experiment (deps in `requirements-train.txt`); weights are Git LFS and not used by the live API.
 
 ---
 
-## Quick start
+## Run locally (no Docker)
+
+```bash
+./run_local.sh
+```
+
+Sets up `.venv`, starts generator (:5001), API (:8000) and dashboard (:3000), opens the browser. `Ctrl+C` stops all.
+Optional LLM explanations: copy `.env.example` to `.env` and set `GROQ_API_KEY`.
+
+Tests: `.venv/bin/python -m pytest llm-service log-generator`
+
+## How explanations work
+
+- `llm-service/analyzer.py` tags each line with a category, severity and the signal words that matched; confidence = how clearly the top category beats the runner-up.
+- Lines roll up into an incident: status, health score, timeline, root cause, actions.
+- `llm-service/llm.py` (optional, Groq `openai/gpt-oss-120b`) writes a plain-language incident explanation and points to key lines.
+- Paste raw logs (ISO, `[LEVEL]`, JSON lines, HDFS) via the dashboard or `POST /analyze-text`.
+
+## Quick start (Docker)
 
 ```bash
 git clone https://github.com/Addy48/llm-log-explainer.git
@@ -70,7 +88,7 @@ Generator also exposes `/generate`, `/generate/batch`, `/scenario/<name>` (`data
 
 ```bash
 cd llm-service
-pip install -r requirements.txt
+pip install -r requirements-train.txt
 python prepare_data.py
 python train.py
 python evaluate.py
